@@ -96,3 +96,41 @@ def test_yaw_reversal_is_bounded_and_translation_waits_for_correct_turn():
     assert cmd.fwd_vel == 0
     cmd,s=c.step(belief(valid=False),-.4,0.,.2,s)
     assert cmd.yaw_rate == cmd.fwd_vel == 0
+
+
+def reorient_controller():
+    return SectorController(SectorControllerConfig(n_sectors=11,goal_recovery=True,
+          robust_hysteresis=True,opening_steering=True,reorient_to_goal=True))
+
+
+def test_goal_outside_view_turns_toward_goal_even_without_flow():
+    c=reorient_controller()
+    cmd,s=c.step(belief(valid=False),-1.2,0,.1,ControlState(None,0,None,0))
+    assert cmd.fwd_vel == 0
+    assert cmd.yaw_rate < 0
+    assert s.reorienting
+    assert cmd.telemetry.switch_reason == 'reorient_to_goal'
+
+
+def test_reorientation_exits_only_in_central_view_then_requires_perception():
+    c=reorient_controller()
+    _,s=c.step(belief(),1.2,0,.1,ControlState(None,0,None,0))
+    cmd,s=c.step(belief(),.5,.7,.2,s)
+    assert s.reorienting and cmd.fwd_vel == 0
+    cmd,s=c.step(belief(valid=False),.1,1.1,.3,s)
+    assert not s.reorienting
+    assert cmd.mode == 'blind' and cmd.fwd_vel == 0
+
+
+def test_stationary_reorientation_converges_from_both_sides():
+    for yaw in (-2.,2.):
+        c=reorient_controller();s=ControlState(None,0,None,0)
+        entered=False
+        for i in range(1,250):
+            cmd,s=c.step(belief(valid=False),-yaw,yaw,i*.04,s)
+            if s.reorienting:
+                entered=True
+                assert cmd.fwd_vel == 0
+            yaw+=cmd.yaw_rate*.04
+        assert entered
+        assert abs(yaw)<.35

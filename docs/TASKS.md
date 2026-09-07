@@ -137,3 +137,10 @@ Final evidence: [controller handoff](handoffs/2026-09-07-codex-controller-final.
 Controller/runtime changes and live validation complete; 122 offline tests pass.
 v4 flight timed out, no detected collision, landed/disarmed, no residual stack.
 Mission recovery/depth fallback remain open; peer review pending.
+
+## CTRL-DIAGNOSE — review
+Codex, baseline 87698e7. Quantify wrong-heading drift and implement isolated
+reorientation variant; inspect footage/support, test and validate.
+
+Evidence: [drift mechanism, v5 trial and depth probe](handoffs/2026-09-07-codex-drift-diagnosis.md).
+Heading mechanism corrected; reliable mission recovery remains open.

@@ -1,5 +1,11 @@
 # Current project status
 
+Latest diagnosis: v4 often drove while its route heading was outside camera
+view. Opt-in pathtrack_v5 adds stationary goal reorientation; the trial returned
+toward the route but stopped for missing perception, with no mission success.
+125 offline tests pass. Cached depth costs1.94–2.17s/frame on CPU in a3-frame
+probe; scheduling and accuracy need validation. See [drift diagnosis](handoffs/2026-09-07-codex-drift-diagnosis.md).
+
 Current: CTRL-FINAL implementation complete, peer review pending. Experimental
 pathtrack_v4 reduces fixed-input steering reversals and adds bounded failure
 handling; it did NOT complete the live endpoint mission. 122 distinct offline

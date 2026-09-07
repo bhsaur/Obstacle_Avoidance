@@ -19,7 +19,7 @@ echo "Comparison outputs: $OUT"
 # Override to compare pathtrack against pathtrack_v2 without changing its goal.
 read -r -a ARMS <<< "${CTRL_COMPARE_ARMS:-baseline pathtrack}"
 for arm in "${ARMS[@]}"; do
-  case "$arm" in baseline|pathtrack|pathtrack_v2|pathtrack_v3|pathtrack_v4) ;; *) echo 'Invalid arm' >&2; exit 2 ;; esac
+  case "$arm" in baseline|pathtrack|pathtrack_v2|pathtrack_v3|pathtrack_v4|pathtrack_v5) ;; *) echo 'Invalid arm' >&2; exit 2 ;; esac
   python3 -m obst_avoidance.autonomous_demo --output-dir "$OUT/$arm" \
     --zone "$ZONE" --spawn-y "$SPAWN_Y" --headless --controller "$arm" \
     --endpoint-goal --max-wall-time "${CTRL_COMPARE_WALL_S:-240}" > "$OUT/$arm.log" 2>&1 || {

@@ -111,6 +111,7 @@ class SectorControllerConfig:
     decelerate_when_blind: bool = False  # ablation flag, NOT the default -- see SPEED POLICY
     blind_fwd_vel: float = 0.5           # only used if decelerate_when_blind=True
 
+    reorient_to_goal: bool = False  # v5: never drive while the route lies outside view
     opening_steering: bool = False  # v4: pursue goal within connected admitted sectors
     yaw_accel_max: float = 1.0  # v4 command slew, rad/s^2; experimental bound
     goal_recovery: bool = False  # v3: continuous goal correction and uncertainty speed
@@ -231,6 +232,29 @@ class SectorController:
         centre = n // 2
 
         dt = max(0.0, t_capture - state.last_t) if state.last_t is not None else 0.0
+
+        if cfg.reorient_to_goal:
+            bearings = [_sector_bearing(i, cfg) for i in range(n)]
+            view_limit = min(abs(min(bearings)), abs(max(bearings)))
+            # Enter outside observed centres; exit in central half of view.
+            # Odometry, not pixel texture, supplies heading for stationary yaw.
+            limit = view_limit * 0.5 if state.reorienting else view_limit
+            if abs(goal_heading) > limit:
+                desired = _clamp(cfg.k_yaw * goal_heading, -cfg.yaw_rate_max, cfg.yaw_rate_max)
+                previous = state.previous_yaw_rate if dt > 0 else 0.0
+                yaw_rate = _clamp(desired, previous - cfg.yaw_accel_max * dt,
+                                 previous + cfg.yaw_accel_max * dt)
+                target_world = _wrap_to_pi(yaw + goal_heading)
+                cmd = ControlCommand(0.0, yaw_rate, "avoid", None,
+                    ControlTelemetry({}, None, None, target_world, goal_heading,
+                                     "reorient_to_goal", True, None))
+                return cmd, ControlState(target_world, 0.0, belief.source, t_capture,
+                                         previous_yaw_rate=yaw_rate, reorienting=True)
+            if state.reorienting:
+                # The old avoidance choice was made while facing elsewhere.
+                # Reacquire from the current image, preserving yaw slew only.
+                state = ControlState(None, 0.0, belief.source, state.last_t,
+                                     previous_yaw_rate=state.previous_yaw_rate)
 
         candidates = [i for i in range(n) if belief.valid[i]]
         if cfg.goal_recovery:

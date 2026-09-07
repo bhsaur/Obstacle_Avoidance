@@ -137,3 +137,5 @@ class ControlState:
     challenger_since: Optional[float] = None
 
     previous_yaw_rate: float = 0.0  # v4 only; zero after a blind stop
+
+    reorienting: bool = False  # v5: stationary turn until goal is inside central FOV
