@@ -1,6 +1,6 @@
-"""SectorController -- deliberately uninnovative VFH (Borenstein & Koren
-1991). The paper is not about planning; every hour spent making this
-smart is stolen from the gate. Do not add anything not specified here.
+"""Shared sector controller with an unchanged default baseline and explicit
+experimental recovery options. Historical baseline rationale follows below;
+see docs/handoffs/2026-09-07-codex-controller-final.md for v3/v4 policy changes.
 
 Used IDENTICALLY by both CheapStage and (once it exists) HeavyStage --
 this module never inspects belief.source for anything except the
@@ -111,9 +111,20 @@ class SectorControllerConfig:
     decelerate_when_blind: bool = False  # ablation flag, NOT the default -- see SPEED POLICY
     blind_fwd_vel: float = 0.5           # only used if decelerate_when_blind=True
 
+    opening_steering: bool = False  # v4: pursue goal within connected admitted sectors
+    yaw_accel_max: float = 1.0  # v4 command slew, rad/s^2; experimental bound
+    goal_recovery: bool = False  # v3: continuous goal correction and uncertainty speed
+    min_ttc_s: float = 2.0  # v3 experimental admission threshold
+    min_forward_depth_m: float = 1.0  # camera-z distance, not airframe clearance
+    confidence_full_speed: float = 0.25  # experimental coverage threshold, not a probability
     robust_hysteresis: bool = False  # opt-in v2; baseline remains reproducible
 
     def __post_init__(self):
+        if self.opening_steering and (not self.goal_recovery or not math.isfinite(self.yaw_accel_max) or self.yaw_accel_max <= 0):
+            raise ValueError("opening steering requires goal recovery and a positive finite yaw acceleration")
+        if self.goal_recovery and not all(math.isfinite(v) and v > 0 for v in
+                (self.confidence_full_speed, self.min_ttc_s, self.min_forward_depth_m)):
+            raise ValueError("v3 admission thresholds must be finite and positive")
         # Step CN finding: n_sectors does NOT auto-track sector_bearings_rad's
         # length, and every closed-loop run before this check existed silently
         # got away with passing an 11-element sector_bearings_rad alongside the
@@ -222,6 +233,24 @@ class SectorController:
         dt = max(0.0, t_capture - state.last_t) if state.last_t is not None else 0.0
 
         candidates = [i for i in range(n) if belief.valid[i]]
+        if cfg.goal_recovery:
+            candidates = [i for i in candidates if math.isfinite(belief.scores[i])]
+            # Admission uses physical estimates, never the min-max ranking.
+            # Stages expose only the quantity they can estimate; neither field
+            # present means no physical support for forward travel in v3.
+            def admitted(i):
+                evidence = False
+                for values, threshold in ((belief.ttc_s, cfg.min_ttc_s),
+                                          (belief.forward_depth_m, cfg.min_forward_depth_m)):
+                    if values is not None:
+                        value = float(values[i])
+                        if not math.isfinite(value) or value <= threshold:
+                            return False
+                        evidence = True
+                return evidence
+            candidates = [i for i in candidates if admitted(i)]
+            if not math.isfinite(belief.confidence) or belief.confidence <= 0:
+                candidates = []
 
         if not candidates:
             # BLIND: no sector is valid. Steering only -- hold heading
@@ -231,7 +260,8 @@ class SectorController:
             # is set. No sensible bearing to keep holding either --
             # same "nothing to stay committed to" reasoning as the old
             # target_sector=None reset.
-            fwd_vel = cfg.blind_fwd_vel if cfg.decelerate_when_blind else cfg.fwd_vel
+            fwd_vel = (0.0 if cfg.goal_recovery else
+                       cfg.blind_fwd_vel if cfg.decelerate_when_blind else cfg.fwd_vel)
             cmd = ControlCommand(
                 fwd_vel=fwd_vel, yaw_rate=0.0, mode="blind", target_sector=None,
                 telemetry=ControlTelemetry(
@@ -310,6 +340,16 @@ class SectorController:
             switch_reason = ("adopt_no_prior" if current_target is None
                              else "adopt_source_switch" if source_switched
                              else "adopt_target_lost")
+        elif (cfg.goal_recovery and best_candidate != current_target
+              and belief.scores[best_candidate] >= belief.scores[current_target]
+              and abs(_wrap_to_pi(_sector_bearing(best_candidate, cfg) - goal_heading))
+                  < abs(_wrap_to_pi(_sector_bearing(current_target, cfg) - goal_heading))):
+            # Route recovery does not need the obstacle-side switch margin when
+            # the new sector has no worse ranking. Do not call it clearance.
+            target = best_candidate
+            seconds_on_target = dt
+            is_new_commitment = True
+            switch_reason = "goal_recovery"
         elif best_candidate == current_target:
             # Current target still wins -- reinforce. Step CQ: each
             # qualifying (dwelling) frame contributes ITS OWN dt, so a
@@ -422,6 +462,27 @@ class SectorController:
         else:
             target_world_bearing = state.target_world_bearing
 
+        if cfg.goal_recovery:
+            # Steer continuously within the selected angular cell. Clamp at
+            # centre midpoints; outer cells stop at their observed centres.
+            theta = _sector_bearing(target, cfg)
+            lo = ((theta + _sector_bearing(target + 1, cfg)) / 2
+                  if target + 1 < n else theta)
+            hi = ((theta + _sector_bearing(target - 1, cfg)) / 2
+                  if target > 0 else theta)
+            target_world_bearing = _wrap_to_pi(yaw + _clamp(goal_heading, lo, hi))
+        if cfg.opening_steering:
+            # An admitted opening is contiguous; never interpolate across an
+            # unknown/rejected sector. Goal steering within it need not chase
+            # each min-max score fluctuation between its component sectors.
+            left = right = target
+            while left > 0 and left - 1 in candidates:
+                left -= 1
+            while right + 1 < n and right + 1 in candidates:
+                right += 1
+            desired = _clamp(goal_heading, _sector_bearing(right, cfg), _sector_bearing(left, cfg))
+            target = min(range(left, right + 1), key=lambda i: abs(_sector_bearing(i, cfg) - desired))
+            target_world_bearing = _wrap_to_pi(yaw + desired)
         theta_target_body = _wrap_to_pi(target_world_bearing - yaw)
         yaw_rate = _clamp(cfg.k_yaw * theta_target_body, -cfg.yaw_rate_max, cfg.yaw_rate_max)
 
@@ -431,8 +492,25 @@ class SectorController:
         else:
             mode = "cruise"
 
+        fwd_vel = cfg.fwd_vel
+        if cfg.goal_recovery:
+            coverage = _clamp(belief.confidence / cfg.confidence_full_speed, 0.0, 1.0)
+            alignment = max(0.0, math.cos(theta_target_body))
+            # Turn in place if the goal lies behind the forward camera.
+            if abs(goal_heading) >= math.pi / 2:
+                alignment = 0.0
+            fwd_vel *= coverage * alignment
+        if cfg.opening_steering:
+            requested_yaw_rate = yaw_rate
+            # A capture-clock reset starts from rest. Blind stops are immediate;
+            # normal changes are bounded in sim time, independent of frame rate.
+            previous = state.previous_yaw_rate if dt > 0 else 0.0
+            change = cfg.yaw_accel_max * dt
+            yaw_rate = _clamp(yaw_rate, previous - change, previous + change)
+            if yaw_rate * requested_yaw_rate < 0:
+                fwd_vel = 0.0  # no forward drive while still turning the old way
         cmd = ControlCommand(
-            fwd_vel=cfg.fwd_vel, yaw_rate=yaw_rate, mode=mode, target_sector=target,
+            fwd_vel=fwd_vel, yaw_rate=yaw_rate, mode=mode, target_sector=target,
             telemetry=ControlTelemetry(
                 costs=dict(cost), best_candidate=best_candidate, current_target=current_target,
                 target_world_bearing=target_world_bearing, heading_error=theta_target_body,
@@ -446,5 +524,6 @@ class SectorController:
             last_t=t_capture,
             challenger_sector=challenger_sector if not is_new_commitment else None,
             challenger_since=challenger_since if not is_new_commitment else None,
+            previous_yaw_rate=yaw_rate if cfg.opening_steering else 0.0,
         )
         return cmd, new_state

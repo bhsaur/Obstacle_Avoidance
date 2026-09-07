@@ -93,3 +93,12 @@ def test_contours_do_not_change_belief(monkeypatch):
         np.testing.assert_array_equal(a.valid, b.valid)
         np.testing.assert_array_equal(a.scores, b.scores)
         assert np.all((a.scores[a.valid] >= 0) & (a.scores[a.valid] <= 1))
+
+
+def test_absolute_ttc_is_lk_only_and_not_normalized(monkeypatch):
+    monkeypatch.setattr(cheap, 'track_pair', lambda *args: tracks(12, 0.1, 3))
+    stage = cheap.CheapStage(INTR, n_sectors=1, use_contours=False)
+    b, _ = stage.infer(packet(1), packet(.9), ODOM)
+    assert b.ttc_s.shape == (1,)
+    assert b.ttc_s[0] > 1.0
+    assert b.forward_depth_m is None

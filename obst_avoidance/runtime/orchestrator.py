@@ -244,6 +244,19 @@ class OrchestratorConfig:
     controller_version: str = "baseline_world_bearing"
     velocity_frame: str = "body_forward->world_ENU/LOCAL_NED"  # post velocity-frame-fix
     scene_version: str = ""          # caller fills (e.g. world file id) -- for run metadata
+    goal_xy: Optional[tuple] = None  # opt-in endpoint arrival criterion
+    goal_tolerance_m: float = 0.75
+    unsupported_timeout_s: Optional[float] = None  # continuous blind capture time
+
+    def __post_init__(self):
+        if self.unsupported_timeout_s is not None and (not math.isfinite(self.unsupported_timeout_s) or self.unsupported_timeout_s <= 0):
+            raise ValueError("unsupported_timeout_s must be finite and positive")
+        if not math.isfinite(self.goal_tolerance_m) or self.goal_tolerance_m <= 0:
+            raise ValueError("goal_tolerance_m must be finite and positive")
+        if self.goal_xy is not None and (len(self.goal_xy) != 2 or
+                not all(math.isfinite(v) for v in self.goal_xy)):
+            raise ValueError("goal_xy must contain two finite coordinates")
+
 
 
 @dataclass
@@ -336,7 +349,11 @@ class Orchestrator:
                 "scene_version": cfg.scene_version,
                 "goal_reference": ref,
                 "goal_x_m": cfg.goal_x_m,
-                "completion_criterion": "x >= goal_x_m (not endpoint arrival)",
+                "completion_criterion": "endpoint_radius" if cfg.goal_xy is not None else "goal_x_crossing",
+                "goal_xy": cfg.goal_xy, "goal_tolerance_m": cfg.goal_tolerance_m,
+                "command_timeout_s": getattr(self.vehicle, "_command_timeout_s", None),
+                "unsupported_timeout_s": cfg.unsupported_timeout_s,
+                "target_switch_count_semantics": "world bearing updates; includes continuous goal trim",
                 "yaw_rate_source": "finite difference of valid odometry yaw over capture time",
                 "obs_age_ms_semantics": "unavailable; inference_to_command_ms is wall processing latency",
                 "collision_radius_m": cfg.collision_radius_m,
@@ -344,6 +361,7 @@ class Orchestrator:
         mode_counts = {"cruise": 0, "avoid": 0, "blind": 0}
         n_switches = 0
         prev_target_world_bearing = None
+        unsupported_since = None
         prev_yaw = None            # for finite-difference measured yaw rate
         prev_yaw_t = None
         perception_latencies: List[float] = []
@@ -372,6 +390,8 @@ class Orchestrator:
                     break  # safety cap -- did not collide or complete within the wall-clock budget
 
                 packet = self.frame_source.read()
+                if packet is not None and prev_packet is not None and packet.t_capture <= prev_packet.t_capture:
+                    packet = None  # repeated/backwards timestamps are not fresh observations
                 if packet is None:
                     if cfg.frame_timeout_s is not None and now_wall - last_frame_wall > cfg.frame_timeout_s:
                         stop_reason = "camera_timeout"
@@ -427,6 +447,19 @@ class Orchestrator:
                 cmd, ctrl_state = self.controller.step(belief, goal_heading, yaw, packet.t_capture, ctrl_state)
                 controller_latencies.append((time.perf_counter() - t1) * 1000.0)
 
+                processing_limit = getattr(self.vehicle, "_command_timeout_s", None)
+                if processing_limit is not None and time.perf_counter() - t0 >= processing_limit:
+                    # The republisher has already braked during the stall. Do
+                    # not restart motion using a result that arrived too late.
+                    stop_reason = "perception_timeout"
+                    break
+                if cfg.goal_xy is not None:
+                    if not odom_valid:
+                        cmd = ControlCommand(0.0, 0.0, "blind", None, cmd.telemetry)
+                        ctrl_state.previous_yaw_rate = 0.0  # slew resumes from the command actually sent
+                    elif position is not None:
+                        distance = math.hypot(position[0] - cfg.goal_xy[0], position[1] - cfg.goal_xy[1])
+                        cmd.fwd_vel = 0.0 if distance <= cfg.goal_tolerance_m else min(cmd.fwd_vel, distance)
                 self.vehicle.send(cmd)
                 inference_to_command_ms = (time.perf_counter() - t0) * 1000.0
 
@@ -455,6 +488,8 @@ class Orchestrator:
                         "scores": belief.scores.tolist(),
                         "valid": belief.valid.tolist(),
                         "confidence": belief.confidence,
+                        "ttc_s": belief.ttc_s.tolist() if belief.ttc_s is not None else None,
+                        "forward_depth_m": belief.forward_depth_m.tolist() if belief.forward_depth_m is not None else None,
                         "source": belief.source,
                         "perception_latency_ms": belief.latency_ms,
                         "features": dict(zip(self._feature_names, feats.tolist())),
@@ -479,6 +514,12 @@ class Orchestrator:
                     }
                     log_f.write(json.dumps(row) + "\n")
 
+                if cmd.mode == "blind":
+                    if unsupported_since is None:
+                        unsupported_since = packet.t_capture
+                else:
+                    unsupported_since = None
+
                 keep_running = True
                 if self.on_frame is not None:
                     keep_running = self.on_frame(packet, belief, feats, odom, cmd) is not False
@@ -492,11 +533,17 @@ class Orchestrator:
                         collision_xy = (x, y)
                         stop_reason = "collision"
                         break
-                    if x >= cfg.goal_x_m:
+                    arrived = (math.hypot(x - cfg.goal_xy[0], y - cfg.goal_xy[1]) <= cfg.goal_tolerance_m
+                               if cfg.goal_xy is not None else x >= cfg.goal_x_m)
+                    if arrived:
                         completed = True
-                        stop_reason = "goal_reached"
+                        stop_reason = "endpoint_reached" if cfg.goal_xy is not None else "goal_reached"
                         break
 
+                if (cfg.unsupported_timeout_s is not None and unsupported_since is not None
+                        and packet.t_capture - unsupported_since >= cfg.unsupported_timeout_s):
+                    stop_reason = "perception_unavailable"
+                    break
                 if not keep_running:
                     stop_reason = "user_stop"
                     break

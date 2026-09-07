@@ -183,6 +183,7 @@ class HeavyStage:
 
         scores = np.full(n, np.nan)
         valid = np.zeros(n, dtype=bool)
+        forward_depth_m = np.full(n, np.nan)
 
         xs = np.arange(self.width)
         sec_idx = geometry.sector_index(xs.astype(float), self.width, n)
@@ -199,6 +200,7 @@ class HeavyStage:
             # danger/1-danger flip needed the way the relative checkpoint required.
             nearest_z_m = float(np.percentile(sector_pixels, self.nearest_percentile))
             score = min(max(nearest_z_m / self.z_cap_m, 0.0), 1.0)
+            forward_depth_m[s] = nearest_z_m
             scores[s] = score
             valid[s] = True
 
@@ -218,4 +220,5 @@ class HeavyStage:
             confidence=confidence,
             source="heavy",
             latency_ms=latency_ms,
+            forward_depth_m=forward_depth_m,
         )

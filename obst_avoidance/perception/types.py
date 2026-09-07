@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 
@@ -52,3 +53,8 @@ class SectorBelief:
     confidence: float     # overall belief confidence in [0, 1] -- see the producing stage for how it's derived (e.g. CheapStage de-rates this on gyro_valid/odom_valid=False).
     source: str           # "cheap" | "heavy" -- which stage produced this belief.
     latency_ms: float     # wall-clock inference time for this call, milliseconds. Feeds the gate's cost side of the learning-to-defer tradeoff.
+
+    # Optional physical estimates BEFORE within-frame score normalization.
+    # Unknown stays None/NaN. These are noisy estimates, not clearance proofs.
+    ttc_s: Optional[np.ndarray] = None  # LK time proxy (magnitude flow, not calibrated closing TTC)
+    forward_depth_m: Optional[np.ndarray] = None  # per-sector metric camera-z depth

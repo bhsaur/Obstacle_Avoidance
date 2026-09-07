@@ -323,3 +323,120 @@ def test_yaw_rate_does_not_bridge_missing_odometry(tmp_path):
     assert rows[3]['measured_yaw_rate'] == pytest.approx(0.0)
     assert all(r['obs_age_ms'] is None for r in rows)
     assert all(r['inference_to_command_ms'] >= 0 for r in rows)
+
+
+def test_endpoint_requires_lateral_arrival(tmp_path):
+    orch = _make_orchestrator(2.0,50.0)
+    orch.config.goal_xy = (5.0, 0.0)
+    orch.config.goal_x_m = 5.0
+    orch.should_stop = lambda: orch.vehicle._x > 8
+    result = orch.run()
+    assert not result.completed
+    assert result.stop_reason == 'user_stop'
+
+
+def test_endpoint_arrival_is_distinct_from_goal_line():
+    orch = _make_orchestrator(2.0,50.0)
+    orch.config.goal_xy = (5.0,50.0)
+    result = orch.run()
+    assert result.completed
+    assert result.stop_reason == 'endpoint_reached'
+
+
+def test_repeated_camera_timestamp_cannot_refresh_watchdog(monkeypatch):
+    from types import SimpleNamespace
+    from obst_avoidance.runtime import orchestrator as module
+    wall = [0.0]
+    def sleep(dt):
+        wall[0] += dt
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: wall[0],
+                        perf_counter=lambda: wall[0], sleep=sleep))
+    orch = _make_orchestrator(2.0,50.0)
+    orch.config.frame_timeout_s = .05
+    orch.frame_source.read = lambda: _StubPacket(seq=1,t_capture=1.0)
+    result = orch.run()
+    assert result.stop_reason == 'camera_timeout'
+    assert result.n_frames == 0
+    assert orch.vehicle.sent_commands[-1].fwd_vel == 0
+
+
+def test_late_inference_cannot_restart_motion_after_watchdog(monkeypatch):
+    from types import SimpleNamespace
+    from obst_avoidance.runtime import orchestrator as module
+    wall = [0.0]
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: wall[0],
+                        perf_counter=lambda: wall[0], sleep=lambda dt: None))
+    orch = _make_orchestrator(2.0,50.0)
+    orch.vehicle._command_timeout_s = 1.0
+    infer = orch.perception_stage.infer
+    def late(*args):
+        wall[0] += 1.5
+        return infer(*args)
+    orch.perception_stage.infer = late
+    result = orch.run()
+    assert result.stop_reason == 'perception_timeout'
+    assert all(cmd.fwd_vel == cmd.yaw_rate == 0 for cmd in orch.vehicle.sent_commands)
+
+
+def test_endpoint_approach_does_not_asymptotically_stop_outside_tolerance():
+    orch = _make_orchestrator(2.0,50.0)
+    orch.config.goal_xy = (-0.249,50.0)  # first pose -1 is 0.751m away
+    orch.should_stop = lambda: bool(orch.vehicle.sent_commands)
+    orch.run()
+    assert orch.vehicle.sent_commands[0].fwd_vel > .5
+
+
+def test_continuous_missing_support_ends_with_explicit_reason():
+    orch = _make_orchestrator(0.,50.)
+    orch.config.unsupported_timeout_s = .12
+    infer = orch.perception_stage.infer
+    def blind(*args):
+        b,f = infer(*args)
+        b.valid[:] = False
+        return b,f
+    orch.perception_stage.infer = blind
+    result = orch.run()
+    assert result.stop_reason == 'perception_unavailable'
+    assert not result.completed
+    assert orch.vehicle.sent_commands[-1].fwd_vel == 0
+
+
+def test_collision_takes_priority_over_simultaneous_perception_timeout():
+    orch = _make_orchestrator(0.,50.)
+    orch.config.unsupported_timeout_s = .1
+    calls = [0]
+    def state_at(t):
+        calls[0] += 1
+        p = (55.,0.,3.) if calls[0] >= 4 else (-3.,50.,3.)
+        return p,(0.,0.,0.),(0.,0.,0.,1.),True
+    orch.vehicle.state_at = state_at
+    infer = orch.perception_stage.infer
+    def blind(*args):
+        b,f = infer(*args)
+        b.valid[:] = False
+        return b,f
+    orch.perception_stage.infer = blind
+    assert orch.run().stop_reason == 'collision'
+
+
+def test_invalid_odometry_resets_slew_to_command_actually_sent():
+    from dataclasses import replace
+    from obst_avoidance.control.types import ControlCommand
+    orch = _make_orchestrator(0.,50.)
+    orch.config.goal_xy = (30.,50.)
+    original = orch.vehicle.state_at
+    calls = [0]
+    def state_at(t):
+        calls[0] += 1
+        p,v,q,valid = original(t)
+        return p,v,q,calls[0] != 1
+    observed=[]
+    def step(b,goal,yaw,t,state):
+        observed.append(state.previous_yaw_rate)
+        return ControlCommand(.8,.4,'avoid',1),replace(state,last_t=t,previous_yaw_rate=.4)
+    orch.vehicle.state_at=state_at
+    orch.controller.step=step
+    orch.should_stop=lambda: len(orch.vehicle.sent_commands)>=2
+    orch.run()
+    assert observed == [0.,0.]
+    assert orch.vehicle.sent_commands[0].yaw_rate == 0

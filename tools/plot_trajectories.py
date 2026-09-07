@@ -121,7 +121,7 @@ def _status(result):
     if result.get("_parse_error"):
         return "unknown(bad result.json)"
     sr = result.get("stop_reason")
-    mapping = {"collision": "COLLIDED", "goal_reached": "goal_x_crossed",
+    mapping = {"perception_unavailable": "perception_unavailable", "perception_timeout": "timed_out(perception)", "endpoint_reached": "endpoint_reached", "collision": "COLLIDED", "goal_reached": "goal_x_crossed",
                "user_stop": "user_stopped", "camera_timeout": "timed_out(camera)",
                "wall_timeout": "timed_out(wall)"}
     if sr in mapping:

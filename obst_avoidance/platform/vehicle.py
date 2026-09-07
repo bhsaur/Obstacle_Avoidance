@@ -25,9 +25,9 @@ depend on what thread or loop cadence a caller uses). A ROS timer on
 that node, firing at a FIXED PUBLISH_RATE_HZ independent of anything
 else, republishes whatever ControlCommand was last given to send() --
 send() only UPDATES the stored command, it never publishes directly.
-Even if the perception loop stalls completely for several seconds, the
-vehicle keeps receiving its last known-good command at the fixed rate
-until a new one arrives.
+After command_timeout_s without send(), the steady-clock timer publishes
+zero translation and yaw until fresh commands arrive. This operational
+watchdog is independent of capture-time controller hysteresis.
 """
 import math
 import threading
@@ -40,6 +40,7 @@ from geometry_msgs.msg import TwistStamped
 from mavros_msgs.msg import State
 from mavros_msgs.srv import CommandBool, CommandTOL, SetMode
 from nav_msgs.msg import Odometry
+from rclpy.clock import Clock, ClockType
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
@@ -103,7 +104,12 @@ class MavrosVehicle(Node):
     """
 
     def __init__(self, node_name: str = "mavros_vehicle", publish_rate_hz: float = PUBLISH_RATE_HZ,
-                 odom_buffer_size: int = 200, odom_staleness_s: float = 0.05):
+                 odom_buffer_size: int = 200, odom_staleness_s: float = 0.05, command_timeout_s: float = 1.0):
+        if not math.isfinite(command_timeout_s) or command_timeout_s <= 0:
+            raise ValueError("command_timeout_s must be finite and positive")
+        self._command_timeout_s = command_timeout_s
+        self._last_command_wall = None
+        self.command_expired = False
         super().__init__(node_name, parameter_overrides=[Parameter("use_sim_time", value=True)])
         self._executor = SingleThreadedExecutor()
         self._executor.add_node(self)
@@ -145,7 +151,8 @@ class MavrosVehicle(Node):
 
         self.create_subscription(Odometry, "/odometry", self._on_odom, 10)
         self.create_subscription(State, "/state", self._on_state, 10)
-        self.create_timer(1.0 / publish_rate_hz, self._publish_timer_cb)
+        self.create_timer(1.0 / publish_rate_hz, self._publish_timer_cb,
+                          clock=Clock(clock_type=ClockType.STEADY_TIME))
 
         # Dedicated spin thread, started here -- before anything else
         # can use this node -- so the republish timer above fires
@@ -265,6 +272,10 @@ class MavrosVehicle(Node):
                 # Monitoring and the period after entering LAND do not
                 # publish velocity commands.
                 return
+            self.command_expired = (self._last_command_wall is None or
+                time.monotonic() - self._last_command_wall >= self._command_timeout_s)
+            if self.command_expired:
+                cmd = ControlCommand(0.0, 0.0, "blind", None)
             with self._state_lock:
                 quat = self._attitude_quat
             twist = TwistStamped()
@@ -282,8 +293,12 @@ class MavrosVehicle(Node):
     # ---- VehicleInterface (caller's thread) ------------------------------
 
     def send(self, cmd: ControlCommand) -> None:
+        if not all(math.isfinite(v) for v in (cmd.fwd_vel, cmd.yaw_rate)):
+            cmd = ControlCommand(0.0, 0.0, "blind", None)
         with self._cmd_lock:
             self._last_cmd = cmd
+            self._last_command_wall = time.monotonic()
+            self.command_expired = False
 
     def state(self) -> VehicleState:
         with self._state_lock:

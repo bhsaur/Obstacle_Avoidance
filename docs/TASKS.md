@@ -120,3 +120,20 @@ Backup: `.collaboration/backups/29e6e4807d09ae47e05728edb86e7a26/`.
 Integration evidence: [Codex review and corrections](handoffs/2026-09-07-codex-controller-integration.md).
 100 tests passed; baseline equivalence checked over 10,000 steps. Claude comparison
 reviewed; Codex opt-in changes await peer review and matched flight trials.
+
+## CTRL-RECOVERY — review (paused by user)
+Owner Codex; baseline c0e074f, initially clean. Complete controller recovery,
+uncertainty response, independent command expiry and matched simulation.
+
+User stopped work; changes uncommitted. [Resume handoff](handoffs/2026-09-07-codex-recovery-paused.md).
+116 tests passed; matched flights completed and cleaned up. v3 timed out
+after stopping with insufficient flow; final review/commit pending.
+
+## CTRL-FINAL — review
+Codex resumed preserved CTRL-RECOVERY edits on c0e074f; inspect dropout
+reversals, add opening steering and bounded perception failure, verify/commit.
+
+Final evidence: [controller handoff](handoffs/2026-09-07-codex-controller-final.md).
+Controller/runtime changes and live validation complete; 122 offline tests pass.
+v4 flight timed out, no detected collision, landed/disarmed, no residual stack.
+Mission recovery/depth fallback remain open; peer review pending.

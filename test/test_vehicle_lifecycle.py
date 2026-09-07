@@ -35,6 +35,9 @@ def fake(monkeypatch):
     vehicle._velocity = (0.0, 0.0, 0.0)
     vehicle._attitude_quat = (0.0, 0.0, 0.0, 1.0)
     vehicle._last_cmd = None
+    vehicle._last_command_wall = None
+    vehicle._command_timeout_s = 1.0
+    vehicle.command_expired = False
     vehicle._spin_stop = threading.Event()
     vehicle._closed = False
     vehicle._executor = Mock()
@@ -212,3 +215,20 @@ def test_monitoring_publishes_nothing_and_close_is_idempotent(fake):
     vehicle.close()
     vehicle._executor.shutdown.assert_called_once()
     vehicle.destroy_node.assert_called_once()
+
+
+def test_command_expiry_publishes_zero_without_new_inference(fake):
+    vehicle, clock = fake
+    vehicle.send(ControlCommand(0.8, 0.4, 'avoid', 1))
+    clock.now = 0.9
+    vehicle._publish_timer_cb()
+    assert vehicle._vel_pub.publish.call_args.args[0].twist.linear.x == 0.8
+    clock.now = 1.0
+    vehicle._publish_timer_cb()
+    twist = vehicle._vel_pub.publish.call_args.args[0].twist
+    assert twist.linear.x == twist.linear.y == twist.angular.z == 0.0
+    assert vehicle.command_expired
+    vehicle.send(ControlCommand(0.3, -0.2, 'avoid', 1))
+    vehicle._publish_timer_cb()
+    assert vehicle._vel_pub.publish.call_args.args[0].twist.angular.z == -0.2
+    assert not vehicle.command_expired

@@ -608,6 +608,7 @@ class CheapStage:
             confidence=confidence,
             source="cheap",
             latency_ms=latency_ms,
+            ttc_s=merged_raw_tau.copy(),  # LK-only, unsmoothed absolute urgency
         )
 
         computed = {}

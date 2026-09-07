@@ -135,3 +135,5 @@ class ControlState:
     # Used only by the opt-in robust hysteresis variant.
     challenger_sector: Optional[int] = None
     challenger_since: Optional[float] = None
+
+    previous_yaw_rate: float = 0.0  # v4 only; zero after a blind stop

@@ -29,11 +29,13 @@ def main(argv=None):
     parser.add_argument('--max-wall-time', type=float, default=240.0)
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--gazebo-gui', action='store_true')
-    parser.add_argument('--controller', choices=('baseline', 'pathtrack', 'pathtrack_v2'), default='baseline',
+    parser.add_argument('--controller', choices=('baseline', 'pathtrack', 'pathtrack_v2', 'pathtrack_v3', 'pathtrack_v4'), default='baseline',
                         help='baseline = fixed world +x goal (unchanged); pathtrack = '
                              'pure-pursuit lookahead on the straight spawn->goal route')
+    parser.add_argument('--endpoint-goal', action='store_true',
+                        help='require arrival within 0.75m of the route endpoint in any arm')
     parser.add_argument('--lookahead-m', type=float, default=3.0,
-                        help='pathtrack only: lookahead distance along the reference route')
+                        help='path variants: lookahead distance along the reference route')
     args = parser.parse_args(argv)
     if not np.isfinite([args.spawn_y, args.altitude, args.max_wall_time, args.lookahead_m]).all():
         parser.error('flight parameters must be finite')
@@ -49,10 +51,17 @@ def main(argv=None):
     config = dict(zone=args.zone, spawn_x=segment['start_x'], spawn_y=args.spawn_y,
                   goal_x=segment['goal_x_m'], altitude=args.altitude,
                   max_wall_time=args.max_wall_time, speed_mps=0.8, sectors=11,
-                  feature_count=168, perception='cheap', seed=0,
+                  feature_count=168, perception='cheap', seed=None, seed_applied=False,
                   velocity_frame='body forward converted to world ENU / LOCAL_NED',
                   controller=args.controller, lookahead_m=args.lookahead_m,
-                  visual_recording_fps=25.0)
+                  visual_recording_fps=25.0, command_timeout_s=1.0,
+                  endpoint_goal=args.endpoint_goal or args.controller in ('pathtrack_v3', 'pathtrack_v4'),
+                  min_ttc_s=2.0, min_forward_depth_m=1.0, confidence_full_speed=0.25,
+                  yaw_accel_max=1.0 if args.controller == 'pathtrack_v4' else None,
+                  unsupported_timeout_s=5.0 if args.controller == 'pathtrack_v4' else None,
+                  speed_policy='confidence_and_alignment' if args.controller in ('pathtrack_v3', 'pathtrack_v4') else 'constant')
+    import hashlib
+    config['world_sha256'] = hashlib.sha256((Path(__file__).resolve().parents[1] / 'worlds/env_zones.sdf').read_bytes()).hexdigest()
     (args.output_dir / 'config.json').write_text(json.dumps(config, indent=2))
     cancel = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -214,15 +223,15 @@ def main(argv=None):
         bearings = tuple(geometry.sector_bearings_rad(
             source.intrinsics['width'], source.intrinsics['fx'], source.intrinsics['cx'], n_sectors=11))
         controller = SectorController(SectorControllerConfig(n_sectors=11, sector_bearings_rad=bearings,
-            robust_hysteresis=args.controller == 'pathtrack_v2'))
-        # CTRL-COMPARE: same SectorController for both arms; ONLY the goal-heading
-        # source differs. Baseline = fixed world +x (goal_provider=None). Variant =
-        # pure-pursuit lookahead on the straight route through the spawn toward the
-        # goal (A=spawn, B=(goal_x, spawn_y)), so the intended return path is
-        # unambiguous. Perception, speed, sectors and gains are IDENTICAL.
+            robust_hysteresis=args.controller in ('pathtrack_v2', 'pathtrack_v3', 'pathtrack_v4'),
+            goal_recovery=args.controller in ('pathtrack_v3', 'pathtrack_v4'),
+            opening_steering=args.controller == 'pathtrack_v4'))
+        # All variants use shared SectorController. pathtrack changes only the
+        # goal; v2 adds hysteresis fixes; v3 adds admission/variable speed; v4
+        # adds opening steering, yaw slew and bounded perception failure.
         goal_provider = None
         controller_version = 'baseline_world_bearing'
-        if args.controller in ('pathtrack', 'pathtrack_v2'):
+        if args.controller in ('pathtrack', 'pathtrack_v2', 'pathtrack_v3', 'pathtrack_v4'):
             from .control.reference_path import ReferencePathGoal
             goal_provider = ReferencePathGoal(
                 ax=segment['start_x'], ay=args.spawn_y,
@@ -234,7 +243,9 @@ def main(argv=None):
             OrchestratorConfig(goal_x_m=segment['goal_x_m'], max_wall_time_s=args.max_wall_time,
                                log_path=str(args.output_dir / 'frames.jsonl'), frame_timeout_s=5,
                                goal_provider=goal_provider, controller_version=controller_version,
-                               scene_version='env_zones.sdf'),
+                               goal_xy=(segment['goal_x_m'], args.spawn_y) if args.endpoint_goal or args.controller in ('pathtrack_v3', 'pathtrack_v4') else None,
+                               scene_version='env_zones.sdf',
+                               unsupported_timeout_s=5.0 if args.controller == 'pathtrack_v4' else None),
             on_frame=observed, should_stop=requested_stop)
         print(f'FLIGHT: CheapStage + shared SectorController active [{controller_version}]', flush=True)
         result = orchestrator.run()

@@ -1,5 +1,13 @@
 # Current project status
 
+Current: CTRL-FINAL implementation complete, peer review pending. Experimental
+pathtrack_v4 reduces fixed-input steering reversals and adds bounded failure
+handling; it did NOT complete the live endpoint mission. 122 distinct offline
+tests passed. Latest run landed/disarmed; host simulator processes/ports clean.
+See [final controller handoff](handoffs/2026-09-07-codex-controller-final.md).
+The baseline remains default. Depth fallback and mission reliability remain
+open; this is not completion of the adaptive-gating research project.
+
 Latest update 2026-09-07: Claude controller comparison reviewed; opt-in
 `pathtrack_v2` corrects challenger confirmation and unsupported held bearings.
 Baseline preserved. 100 offline tests pass; v2 flight validation pending.
