@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+install/
+log/
+logs/
+*.egg-info/
+/terrain/
+/mav.tlog*
+/mav.parm
+/eeprom.bin
+/recordings/
+/eval_results/

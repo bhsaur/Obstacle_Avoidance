@@ -1,0 +1,672 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <!--
+    Zoned evaluation corridor (Step N). Flight path is a straight line
+    along y=0, +x direction, from spawn (~x=-3) to ~x=124.
+
+    Zone A x=15-25   TEXTURED, moderate density  -> flow should work, gate mostly should NOT fire
+    Zone B x=50-58   TEXTURELESS solid wall/box   -> flow should fail, gate SHOULD fire (canonical positive)
+    Zone C x=85-95   TEXTURED, high density/tight gaps -> tests gate firing on geometry despite good texture
+    Zone D x=108-122 MIXED: textured obstacles + two textureless surfaces
+                     (narrowD1 at x=108, 3.5m wide, confined-to-center case;
+                      wallD1 at x=122, 10m wide, wider positive case)
+                     -> tests discrimination within a zone AND narrow-vs-wide positive geometry
+
+    Empty stretches between zones are genuinely empty (no obstacles) -
+    this is where a periodic schedule wastes budget and the gate should
+    stay quiet. See tools/gen_textures.py for how the texture PNGs
+    referenced below were generated (non-periodic fractal + grain noise,
+    deliberately avoiding periodic/checkerboard patterns).
+
+    env_forest.sdf is kept intact for reference - this is a new file.
+  -->
+  <world name="env_zones">
+    <physics name="1ms" type="ignore">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system"
+      name="gz::sim::systems::Physics">
+    </plugin>
+    <plugin
+      filename="gz-sim-sensors-system"
+      name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-user-commands-system"
+      name="gz::sim::systems::UserCommands">
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+      name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+    <plugin filename="gz-sim-imu-system"
+      name="gz::sim::systems::Imu">
+    </plugin>
+    <plugin filename="gz-sim-navsat-system"
+      name="gz::sim::systems::NavSat">
+    </plugin>
+
+    <scene>
+      <ambient>1.0 1.0 1.0</ambient>
+      <background>0.8 0.8 0.8</background>
+      <!-- No <sky> element: the default procedural sky renders a cloud
+           layer, and those clouds get picked up by goodFeaturesToTrack
+           as trackable corners. Cloud flow reflects nothing about scene
+           depth or obstacles - it is pure noise in TTC/divergence
+           estimation, and Step Q's flow diagnostics already showed
+           sky points contributing scattered, unreliable residual flow.
+           A flat background color renders as featureless, so nothing
+           up there gets tracked at all. -->
+    </scene>
+
+    <spherical_coordinates>
+      <latitude_deg>-35.363262</latitude_deg>
+      <longitude_deg>149.165237</longitude_deg>
+      <elevation>584</elevation>
+      <heading_deg>0</heading_deg>
+      <surface_model>EARTH_WGS84</surface_model>
+    </spherical_coordinates>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.8 0.8 0.8 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Large enough to cover the full ~125m corridor with margin. -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>320 80</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>320 80</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.45 0.42 0.36 1</ambient>
+            <diffuse>0.45 0.42 0.36 1</diffuse>
+            <pbr>
+              <metal>
+                <albedo_map>model://obst_avoidance/models/textures/ground_gravel.png</albedo_map>
+                <roughness>0.9</roughness>
+              </metal>
+            </pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="axes">
+      <static>1</static>
+      <link name="link">
+        <visual name="r">
+          <cast_shadows>0</cast_shadows>
+          <pose>5 0 0.1 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>10 0.01 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 0 0 0.8</ambient>
+            <diffuse>1 0 0 0.8</diffuse>
+            <emissive>1 0 0 0.8</emissive>
+            <specular>0.5 0.5 0.5 0.8</specular>
+          </material>
+        </visual>
+        <visual name="g">
+          <cast_shadows>0</cast_shadows>
+          <pose>0 5 0.1 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>0.01 10 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0 1 0 0.8</ambient>
+            <diffuse>0 1 0 0.8</diffuse>
+            <emissive>0 1 0 0.8</emissive>
+            <specular>0.5 0.5 0.5 0.8</specular>
+          </material>
+        </visual>
+        <visual name="b">
+          <cast_shadows>0</cast_shadows>
+          <pose>0 0 5.1 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>0.01 0.01 10</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0 0 1 0.8</ambient>
+            <diffuse>0 0 1 0.8</diffuse>
+            <emissive>0 0 1 0.8</emissive>
+            <specular>0.5 0.5 0.5 0.8</specular>
+          </material>
+        </visual>
+        <sensor name="navsat_sensor" type="navsat">
+          <always_on>1</always_on>
+          <update_rate>1</update_rate>
+        </sensor>
+      </link>
+    </model>
+
+    <!-- ================= ZONE A: x=15-25, TEXTURED, moderate density ================= -->
+
+    <model name="treeA1">
+      <static>true</static>
+      <pose>17 -3.8 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.25</radius><length>5</length></cylinder></geometry>
+          <pose>0 0 2.5 0 0 0</pose>
+        </collision>
+        <visual name="trunk_visual">
+          <geometry><cylinder><radius>0.25</radius><length>5</length></cylinder></geometry>
+          <pose>0 0 2.5 0 0 0</pose>
+          <material>
+            <ambient>0.35 0.22 0.12 1</ambient>
+            <diffuse>0.35 0.22 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/bark.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+          </material>
+        </visual>
+        <visual name="leaves">
+          <geometry><sphere><radius>1.8</radius></sphere></geometry>
+          <pose>0 0 5.5 0 0 0</pose>
+          <material>
+            <ambient>0.16 0.38 0.12 1</ambient>
+            <diffuse>0.16 0.38 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/leaves.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="treeA2">
+      <static>true</static>
+      <pose>20 3.8 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.25</radius><length>4.5</length></cylinder></geometry>
+          <pose>0 0 2.25 0 0 0</pose>
+        </collision>
+        <visual name="trunk_visual">
+          <geometry><cylinder><radius>0.25</radius><length>4.5</length></cylinder></geometry>
+          <pose>0 0 2.25 0 0 0</pose>
+          <material>
+            <ambient>0.35 0.22 0.12 1</ambient>
+            <diffuse>0.35 0.22 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/bark.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+          </material>
+        </visual>
+        <visual name="leaves">
+          <geometry><sphere><radius>1.6</radius></sphere></geometry>
+          <pose>0 0 5.0 0 0 0</pose>
+          <material>
+            <ambient>0.16 0.38 0.12 1</ambient>
+            <diffuse>0.16 0.38 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/leaves.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="boxA1">
+      <static>true</static>
+      <pose>23 -2.8 0 0 0 0.3</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.5 1.5 3</size></box></geometry>
+          <pose>0 0 1.5 0 0 0</pose>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.5 1.5 3</size></box></geometry>
+          <pose>0 0 1.5 0 0 0</pose>
+          <material>
+            <ambient>0.55 0.54 0.52 1</ambient>
+            <diffuse>0.55 0.54 0.52 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/concrete.png</albedo_map><roughness>0.7</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="treeA3">
+      <static>true</static>
+      <pose>24 4.2 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.22</radius><length>4</length></cylinder></geometry>
+          <pose>0 0 2 0 0 0</pose>
+        </collision>
+        <visual name="trunk_visual">
+          <geometry><cylinder><radius>0.22</radius><length>4</length></cylinder></geometry>
+          <pose>0 0 2 0 0 0</pose>
+          <material>
+            <ambient>0.35 0.22 0.12 1</ambient>
+            <diffuse>0.35 0.22 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/bark.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+          </material>
+        </visual>
+        <visual name="leaves">
+          <geometry><sphere><radius>1.5</radius></sphere></geometry>
+          <pose>0 0 4.3 0 0 0</pose>
+          <material>
+            <ambient>0.16 0.38 0.12 1</ambient>
+            <diffuse>0.16 0.38 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/leaves.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ================= ZONE B: x=50-58, TEXTURELESS solid surfaces ================= -->
+    <!-- Canonical gate-should-fire case. wallB1 sits directly on the y=0
+         flight path - this is the wall_approach recording's target.
+
+         REPLACED (Step BG): was a 16m-wide, 6m-tall flat wall. Two
+         independent HeavyStage normalization schemes (per-frame min-max,
+         Step AY; rolling multi-frame window, Step BC) both failed to make
+         this obstacle survivable in closed loop (Step AW, Step BF) -- a
+         16m-wide surface fills most/all of several consecutive frames at
+         close range, leaving no near/far depth contrast for an
+         affine-invariant relative-depth model to anchor ANY normalization
+         scheme against. That's a shared blind spot for BOTH stages (Step
+         BF's own analysis), the same category narrowD1 (Zone D) was
+         already built to avoid for exactly this reason (see its own
+         comment below) -- Zone B just hadn't been given the same
+         treatment yet.
+
+         Sized from the camera's actual intrinsics (fx=205.4696, cx=320,
+         width=640), not eyeballed: geometry.sector_index()'s 5 sectors
+         are PIXEL-linear, not ANGLE-linear, so under the pinhole mapping
+         theta=atan((x-cx)/fx) the centre sector is NOT 115/5=23deg as a
+         naive equal-share estimate would give -- it's [-17.30, +17.30]
+         deg, i.e. 34.6deg wide (~50% wider than the naive estimate),
+         while the outermost sectors are compressed to 14.24deg each. A
+         1.0m-wide box (half_y=0.5) stays purely within the centre
+         sector's angular span down to d=1.6m (half-angle 17.35deg just
+         exceeds 17.30deg there); at the task's specified 2m checkpoint
+         its half-angle is 14.04deg, comfortably inside the centre
+         sector's 17.30deg boundary with ~3.3deg of margin. It only
+         starts spilling into sectors 1/3 below 1.6m, deepening further
+         within the <0.5m close-range breakdown region Step AY/AZ already
+         established applies to both stages independently -- i.e. the
+         one range where this obstacle's own containment guarantee
+         degrades is the SAME range where both stages' readings were
+         already known to be unreliable for other reasons, not a new
+         problem this replacement introduces.
+
+         RESIZED AGAIN (Step BT/BU): the 1.0m x 1.5m box above made
+         CheapStage fail as designed but never gave HeavyStage a
+         signal with usable lead time either (Step BH: onset ~1.5m:
+         Step BL/BM: every "pass" in closed loop was unavoidable
+         start-position luck, not detection). Step BP found the real
+         cause working backwards from measured geometry: heavy.py's
+         80th-percentile aggregator needs an obstacle to occupy the top
+         20% of its sector's PIXELS (not just its angular width) to
+         reach the obstacle at all, and `sector_pixels` spans the FULL
+         image column height regardless of the obstacle's own height --
+         the 1.0m x 1.5m box was already wide enough (horiz_frac
+         88-100% at 3-4m, N=11) but nowhere near tall enough
+         (vert_frac only 16-21% at 3-4m), so height, not width, was the
+         actual bottleneck. Sized this box from that constraint
+         (min width 1.13m @ 4m, min height 1.87m @ 4m for area_frac to
+         clear 20%, both computed from fx=205.4696/fy and the current
+         11-sector default, Step BR) with real margin above both
+         minimums: 1.2m wide x 2.5m tall gives area_frac 26.75%/4m,
+         35.67%/3m, 53.51%/2m -- geometric prediction only at this
+         point; Step BV verifies it against a real recording next.
+         Single panel, not the "several
+         boxes with gaps" option Step BU also offered -- the numbers
+         above already leave the outer 9 of 11 sectors completely
+         clear at every relevant range (this panel occupies at most
+         ~2 of 11 sectors even at 2m), so the gaps-between-boxes
+         design wasn't needed to preserve background contrast.
+
+         REVERTED (Step BW): the Step BT/BU resize above was sized to
+         work around the RELATIVE-depth checkpoint's percentile-based
+         aggregation (needing the obstacle to occupy a large-enough
+         PIXEL FRACTION of its sector for a percentile threshold to
+         reach it at all). Step BW switches HeavyStage to a METRIC
+         checkpoint instead, which reads depth in metres directly, no
+         percentile aggregation over pixel fraction, no normalization
+         step of any kind -- the entire premise the BT/BU resize was
+         solving for no longer applies. Reverted back to the 1.0m x
+         1.5m box (Step BG) so the metric-checkpoint verification tests
+         against the object it's actually meant to handle, not a second
+         confound stacked on top. If metric verification (Step BX)
+         fails, the BT/BU resize's own reasoning remains valid and
+         available to reapply -- not deleted, just not layered in here
+         while a bigger, independent fix is being tested first. -->
+
+    <model name="wallB1">
+      <static>true</static>
+      <pose>55 0 3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.4 1.0 1.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.4 1.0 1.5</size></box></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="boxB1">
+      <static>true</static>
+      <pose>58 -6 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>2 2 3</size></box></geometry>
+          <pose>0 0 1.5 0 0 0</pose>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>2 2 3</size></box></geometry>
+          <pose>0 0 1.5 0 0 0</pose>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ================= ZONE C: x=85-95, TEXTURED, high density / tight gaps ================= -->
+
+    <model name="treeC1">
+      <static>true</static>
+      <pose>86 -1.5 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.25</radius><length>4.5</length></cylinder></geometry>
+          <pose>0 0 2.25 0 0 0</pose>
+        </collision>
+        <visual name="trunk_visual">
+          <geometry><cylinder><radius>0.25</radius><length>4.5</length></cylinder></geometry>
+          <pose>0 0 2.25 0 0 0</pose>
+          <material>
+            <ambient>0.35 0.22 0.12 1</ambient>
+            <diffuse>0.35 0.22 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/bark.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+          </material>
+        </visual>
+        <visual name="leaves">
+          <geometry><sphere><radius>1.6</radius></sphere></geometry>
+          <pose>0 0 5.0 0 0 0</pose>
+          <material>
+            <ambient>0.16 0.38 0.12 1</ambient>
+            <diffuse>0.16 0.38 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/leaves.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="treeC2">
+      <static>true</static>
+      <pose>87 1.5 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.25</radius><length>4.5</length></cylinder></geometry>
+          <pose>0 0 2.25 0 0 0</pose>
+        </collision>
+        <visual name="trunk_visual">
+          <geometry><cylinder><radius>0.25</radius><length>4.5</length></cylinder></geometry>
+          <pose>0 0 2.25 0 0 0</pose>
+          <material>
+            <ambient>0.35 0.22 0.12 1</ambient>
+            <diffuse>0.35 0.22 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/bark.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+          </material>
+        </visual>
+        <visual name="leaves">
+          <geometry><sphere><radius>1.6</radius></sphere></geometry>
+          <pose>0 0 5.0 0 0 0</pose>
+          <material>
+            <ambient>0.16 0.38 0.12 1</ambient>
+            <diffuse>0.16 0.38 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/leaves.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="boxC1">
+      <static>true</static>
+      <pose>89 -3 0 0 0 0.2</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.5 1.5 3.5</size></box></geometry>
+          <pose>0 0 1.75 0 0 0</pose>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.5 1.5 3.5</size></box></geometry>
+          <pose>0 0 1.75 0 0 0</pose>
+          <material>
+            <ambient>0.55 0.54 0.52 1</ambient>
+            <diffuse>0.55 0.54 0.52 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/concrete.png</albedo_map><roughness>0.7</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="boxC2">
+      <static>true</static>
+      <pose>89 0 0 0 0 -0.15</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.5 1.5 4</size></box></geometry>
+          <pose>0 0 2 0 0 0</pose>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.5 1.5 4</size></box></geometry>
+          <pose>0 0 2 0 0 0</pose>
+          <material>
+            <ambient>0.48 0.42 0.36 1</ambient>
+            <diffuse>0.48 0.42 0.36 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/stone.png</albedo_map><roughness>0.8</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="treeC3">
+      <static>true</static>
+      <pose>91 2.5 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.22</radius><length>4</length></cylinder></geometry>
+          <pose>0 0 2 0 0 0</pose>
+        </collision>
+        <visual name="trunk_visual">
+          <geometry><cylinder><radius>0.22</radius><length>4</length></cylinder></geometry>
+          <pose>0 0 2 0 0 0</pose>
+          <material>
+            <ambient>0.35 0.22 0.12 1</ambient>
+            <diffuse>0.35 0.22 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/bark.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+          </material>
+        </visual>
+        <visual name="leaves">
+          <geometry><sphere><radius>1.5</radius></sphere></geometry>
+          <pose>0 0 4.3 0 0 0</pose>
+          <material>
+            <ambient>0.16 0.38 0.12 1</ambient>
+            <diffuse>0.16 0.38 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/leaves.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="boxC3">
+      <static>true</static>
+      <pose>93 -1 0 0 0 0.4</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.3 1.3 3</size></box></geometry>
+          <pose>0 0 1.5 0 0 0</pose>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.3 1.3 3</size></box></geometry>
+          <pose>0 0 1.5 0 0 0</pose>
+          <material>
+            <ambient>0.55 0.54 0.52 1</ambient>
+            <diffuse>0.55 0.54 0.52 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/concrete.png</albedo_map><roughness>0.7</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="treeC4">
+      <static>true</static>
+      <pose>94 1 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.25</radius><length>5</length></cylinder></geometry>
+          <pose>0 0 2.5 0 0 0</pose>
+        </collision>
+        <visual name="trunk_visual">
+          <geometry><cylinder><radius>0.25</radius><length>5</length></cylinder></geometry>
+          <pose>0 0 2.5 0 0 0</pose>
+          <material>
+            <ambient>0.35 0.22 0.12 1</ambient>
+            <diffuse>0.35 0.22 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/bark.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+          </material>
+        </visual>
+        <visual name="leaves">
+          <geometry><sphere><radius>1.7</radius></sphere></geometry>
+          <pose>0 0 5.5 0 0 0</pose>
+          <material>
+            <ambient>0.16 0.38 0.12 1</ambient>
+            <diffuse>0.16 0.38 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/leaves.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ================= ZONE D: x=108-122, MIXED (textured + two textureless) ================= -->
+    <!-- narrowD1 (Step P): a SECOND, narrow textureless positive case,
+         distinct from wallD1/wallB1. wallB1 is 16m wide and bleeds into
+         every sector well before close range; this one is only 3.5m
+         wide, on the y=0 centerline, so it should stay confined to the
+         center sector(s) even at moderate range - the geometric
+         signature centre-vs-outer sector comparisons are meant to
+         detect. 8m clear of treeD1, 11m clear of boxD1, 13.6m clear of
+         wallD1 - a straight y=0 pass hits narrowD1 and wallD1 as two
+         separate, well-separated events. -->
+    <model name="narrowD1">
+      <static>true</static>
+      <pose>108 0 3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.4 3.5 6</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.4 3.5 6</size></box></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="treeD1">
+      <static>true</static>
+      <pose>116 -3.5 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.25</radius><length>5</length></cylinder></geometry>
+          <pose>0 0 2.5 0 0 0</pose>
+        </collision>
+        <visual name="trunk_visual">
+          <geometry><cylinder><radius>0.25</radius><length>5</length></cylinder></geometry>
+          <pose>0 0 2.5 0 0 0</pose>
+          <material>
+            <ambient>0.35 0.22 0.12 1</ambient>
+            <diffuse>0.35 0.22 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/bark.png</albedo_map><roughness>0.85</roughness></metal></pbr>
+          </material>
+        </visual>
+        <visual name="leaves">
+          <geometry><sphere><radius>1.7</radius></sphere></geometry>
+          <pose>0 0 5.5 0 0 0</pose>
+          <material>
+            <ambient>0.16 0.38 0.12 1</ambient>
+            <diffuse>0.16 0.38 0.12 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/leaves.png</albedo_map><roughness>0.9</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="boxD1">
+      <static>true</static>
+      <pose>119 2 0 0 0 -0.25</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1.8 1.8 3.5</size></box></geometry>
+          <pose>0 0 1.75 0 0 0</pose>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1.8 1.8 3.5</size></box></geometry>
+          <pose>0 0 1.75 0 0 0</pose>
+          <material>
+            <ambient>0.48 0.42 0.36 1</ambient>
+            <diffuse>0.48 0.42 0.36 1</diffuse>
+            <pbr><metal><albedo_map>model://obst_avoidance/models/textures/stone.png</albedo_map><roughness>0.8</roughness></metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- The one deliberately textureless surface in this mixed zone,
+         on the y=0 centerline - discrimination test target. -->
+    <model name="wallD1">
+      <static>true</static>
+      <pose>122 0 2.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.4 10 5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.4 10 5</size></box></geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>
