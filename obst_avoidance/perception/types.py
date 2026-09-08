@@ -58,3 +58,5 @@ class SectorBelief:
     # Unknown stays None/NaN. These are noisy estimates, not clearance proofs.
     ttc_s: Optional[np.ndarray] = None  # LK time proxy (magnitude flow, not calibrated closing TTC)
     forward_depth_m: Optional[np.ndarray] = None  # per-sector metric camera-z depth
+
+    obstacle_spans: Optional[tuple] = None  # silhouette angular intervals; not TTC/free-space

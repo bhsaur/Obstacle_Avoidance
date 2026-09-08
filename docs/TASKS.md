@@ -11,6 +11,7 @@ States: `ready`, `in_progress`, `review`, `done`, `blocked`.
 | COLLAB-001 | Shared instructions, status, locking, handoff, and Claude setup review | review | Codex / Claude | — |
 | VIZ-REVIEW | Review Claude trajectory plotter and define controller improvements | review | Claude / Codex review completed; follow-up fixes pending | [Review findings](handoffs/2026-09-07-codex-trajectory-review.md) |
 | CTRL-REVIEW | Diagnose controller behavior and prioritize versioned fixes | review | Codex analysis complete / implementation pending | [Reproduced cases](handoffs/2026-09-07-codex-controller-review.md) |
+| CHEAP-BASIC | Cheap-only large visible box avoidance | review | Codex / Claude (pending) | [Three successful corrected flights](handoffs/2026-09-09-codex-cheap-basic.md) |
 | CHEAP-001 | Review/fix CheapStage correctness and show camera sectors/scores | review | Codex / Claude (pending) | User priority, 2026-09-06 |
 | SIM-001 | Fix confirmed MAVROS duplicate-ACK startup abort and verify camera restart | review | Codex / Claude (pending) | User crash report; live CHEAP-001 demo restored |
 | GATE-001 | Version feature schemas and restore historical dataset loading | ready | Codex / Claude | — |
@@ -144,3 +145,11 @@ reorientation variant; inspect footage/support, test and validate.
 
 Evidence: [drift mechanism, v5 trial and depth probe](handoffs/2026-09-07-codex-drift-diagnosis.md).
 Heading mechanism corrected; reliable mission recovery remains open.
+
+## CHEAP-BASIC — review
+Codex; baseline 2d2a8bd. Implemented opt-in silhouette/flow basic-box avoidance.
+Three corrected flights at y=0/±0.7 reached endpoints without collision,
+landed/disarmed. Preserved initial collision and separate startup timeout.
+137 distinct offline tests pass; package build succeeds; runtime cleaned up.
+Claude peer review pending. [Evidence and limits](handoffs/2026-09-09-codex-cheap-basic.md),
+[run instructions](BASIC_AVOIDANCE.md).

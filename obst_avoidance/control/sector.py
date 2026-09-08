@@ -111,6 +111,8 @@ class SectorControllerConfig:
     decelerate_when_blind: bool = False  # ablation flag, NOT the default -- see SPEED POLICY
     blind_fwd_vel: float = 0.5           # only used if decelerate_when_blind=True
 
+    visible_avoidance: bool = False  # basic visible-object experiment only
+    visible_padding_rad: float = 0.55  # angular stand-off, not metric clearance
     reorient_to_goal: bool = False  # v5: never drive while the route lies outside view
     opening_steering: bool = False  # v4: pursue goal within connected admitted sectors
     yaw_accel_max: float = 1.0  # v4 command slew, rad/s^2; experimental bound
@@ -228,6 +230,9 @@ class SectorController:
         Returns (ControlCommand, ControlState) -- the new state, not a
         mutation of the one passed in."""
         cfg = self.config
+        if cfg.visible_avoidance:
+            from .visible import step_visible
+            return step_visible(belief, goal_heading, yaw, t_capture, state, cfg)
         n = cfg.n_sectors
         centre = n // 2
 

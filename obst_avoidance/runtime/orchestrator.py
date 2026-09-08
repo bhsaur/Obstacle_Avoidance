@@ -174,11 +174,11 @@ def _distance_to_obstacle(x: float, y: float, obstacle: dict) -> float:
     return math.hypot(dx, dy)
 
 
-def nearest_obstacle(x: float, y: float):
+def nearest_obstacle(x: float, y: float, obstacles=None):
     """Returns (obstacle_dict, distance) for the closest obstacle to
     (x, y), or (None, inf) if OBSTACLES is empty (it never is)."""
     best_obs, best_d = None, float("inf")
-    for obs in OBSTACLES:
+    for obs in (OBSTACLES if obstacles is None else obstacles):
         d = _distance_to_obstacle(x, y, obs)
         if d < best_d:
             best_obs, best_d = obs, d
@@ -244,6 +244,7 @@ class OrchestratorConfig:
     controller_version: str = "baseline_world_bearing"
     velocity_frame: str = "body_forward->world_ENU/LOCAL_NED"  # post velocity-frame-fix
     scene_version: str = ""          # caller fills (e.g. world file id) -- for run metadata
+    evaluation_obstacles: Optional[list] = None  # evaluator only, never passed to perception/control
     goal_xy: Optional[tuple] = None  # opt-in endpoint arrival criterion
     goal_tolerance_m: float = 0.75
     unsupported_timeout_s: Optional[float] = None  # continuous blind capture time
@@ -347,6 +348,8 @@ class Orchestrator:
                 "controller_version": cfg.controller_version,
                 "velocity_frame": cfg.velocity_frame,
                 "scene_version": cfg.scene_version,
+                "evaluation_obstacles": cfg.evaluation_obstacles,
+                "perception_version": getattr(self.perception_stage, "version", "unspecified"),
                 "goal_reference": ref,
                 "goal_x_m": cfg.goal_x_m,
                 "completion_criterion": "endpoint_radius" if cfg.goal_xy is not None else "goal_x_crossing",
@@ -488,6 +491,7 @@ class Orchestrator:
                         "scores": belief.scores.tolist(),
                         "valid": belief.valid.tolist(),
                         "confidence": belief.confidence,
+                        "obstacle_spans": belief.obstacle_spans,
                         "ttc_s": belief.ttc_s.tolist() if belief.ttc_s is not None else None,
                         "forward_depth_m": belief.forward_depth_m.tolist() if belief.forward_depth_m is not None else None,
                         "source": belief.source,
@@ -526,7 +530,7 @@ class Orchestrator:
 
                 if position is not None:
                     x, y = position[0], position[1]
-                    obs, dist = nearest_obstacle(x, y)
+                    obs, dist = nearest_obstacle(x, y, cfg.evaluation_obstacles)
                     if dist <= cfg.collision_radius_m:
                         collided = True
                         collision_zone = obs["zone"]

@@ -246,7 +246,8 @@ class CheapStage:
                  use_row_band: bool = False,
                  row_band_obstacle_half_height_m: float = ROW_BAND_OBSTACLE_HALF_HEIGHT_M,
                  row_band_min_range_m: float = ROW_BAND_MIN_RANGE_M,
-                 use_contours: bool = True):
+                 use_contours: bool = True, balanced_tracks: bool = False,
+                 visible_obstacles: bool = False):
         """intrinsics: {fx, fy, cx, cy, width, height} -- the decoded
         form SimFrameSource.intrinsics / LogFrameSource.intrinsics
         already produce. Static for a session (a camera doesn't
@@ -261,6 +262,10 @@ class CheapStage:
         "percentile"; verified at exactly 20, not swept."""
         if estimator not in ("percentile", "divergence"):
             raise ValueError(f"estimator must be 'percentile' or 'divergence', got {estimator!r}")
+        self.balanced_tracks = balanced_tracks
+        self.visible_obstacles = visible_obstacles
+        self.last_obstacle_boxes = []
+        self.version = "cheap_balanced_visible_v1" if visible_obstacles else "cheap_baseline"
         self.fx = intrinsics["fx"]
         self.fy = intrinsics["fy"]
         self.cx = intrinsics["cx"]
@@ -356,7 +361,11 @@ class CheapStage:
         tracked = None
         if dt > 0:
             gray_a = cv2.cvtColor(prev_packet.image, cv2.COLOR_RGB2GRAY)
-            tracked = track_pair(gray_a, gray_b)
+            if self.balanced_tracks:
+                from .visible import track_pair_balanced
+                tracked = track_pair_balanced(gray_a, gray_b, self.n_sectors)
+            else:
+                tracked = track_pair(gray_a, gray_b)
 
         sector_tau = np.full(n, np.nan)
         sector_valid = np.zeros(n, dtype=bool)
@@ -589,7 +598,6 @@ class CheapStage:
         if (not packet.gyro_valid) or (not prev_packet.gyro_valid) or (not odom_valid):
             confidence *= 0.5
 
-        latency_ms = (time.perf_counter() - t0) * 1000.0
 
         # Step AP: scores must be [0,1] traversability, not raw seconds -- see
         # tau_to_score(). Belief is built from the MERGED (LK+contour) tau/valid
@@ -602,12 +610,18 @@ class CheapStage:
         # Step CG -- per-frame across-sectors stretch, symmetric with HeavyStage.
         scores = geometry.normalize_scores_to_span(scores, merged_valid)
 
+        spans = None
+        if self.visible_obstacles:
+            from .visible import obstacle_spans
+            spans, self.last_obstacle_boxes = obstacle_spans(packet.image, self.fx, self.cx, self.cy)
+        latency_ms = (time.perf_counter() - t0) * 1000.0
         belief = SectorBelief(
             scores=scores,
             valid=merged_valid,
             confidence=confidence,
             source="cheap",
             latency_ms=latency_ms,
+            obstacle_spans=spans,
             ttc_s=merged_raw_tau.copy(),  # LK-only, unsmoothed absolute urgency
         )
 

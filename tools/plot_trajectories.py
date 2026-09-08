@@ -134,13 +134,13 @@ def _status(result):
     return "unknown"
 
 
-def min_clearance(xs, ys):
+def min_clearance(xs, ys, obstacles=None):
     """Smallest surface-distance to any obstacle along the path (m).
     <=0 means contact with the obstacle body; the collision ring adds
     COLLISION_RADIUS_M on top."""
     best = 1e9
     for x, y in zip(xs, ys):
-        for o in OBSTACLES:
+        for o in (OBSTACLES if obstacles is None else obstacles):
             if o["kind"] == "circle":
                 d = math.hypot(x - o["x"], y - o["y"]) - o["radius"]
             else:
@@ -151,12 +151,12 @@ def min_clearance(xs, ys):
     return best
 
 
-def clearance_series(xs, ys):
+def clearance_series(xs, ys, obstacles=None):
     """Per-point surface-distance to the NEAREST obstacle along the path."""
     out = []
     for x, y in zip(xs, ys):
         best = 1e9
-        for o in OBSTACLES:
+        for o in (OBSTACLES if obstacles is None else obstacles):
             if o["kind"] == "circle":
                 d = math.hypot(x - o["x"], y - o["y"]) - o["radius"]
             else:
@@ -217,7 +217,7 @@ def plot_timeseries(runs, out):
         a_head.set_ylabel("heading error (rad)", fontsize=8)
         a_head.set_title("target heading error (drives yaw_rate)", fontsize=8)
         # (3) true clearance margin + cross-track
-        clr = clearance_series(run["xs"], run["ys"]) - COLLISION_RADIUS_M
+        clr = clearance_series(run["xs"], run["ys"], run["meta"].get("evaluation_obstacles")) - COLLISION_RADIUS_M
         a_clr.plot(t, clr, color="#2ca02c", lw=1.6, label="clearance - airframe radius (m)")
         a_clr.axhline(0.0, color="#d62728", ls="--", lw=0.9, label="contact (0 m)")
         if np.isfinite(run["cross_track"]).any():
@@ -235,7 +235,7 @@ def plot_timeseries(runs, out):
     fig.savefig(out, dpi=125, bbox_inches="tight")
     print(f"saved {out}  ({n} run(s))")
     for run in runs:
-        clr = clearance_series(run["xs"], run["ys"]) - COLLISION_RADIUS_M
+        clr = clearance_series(run["xs"], run["ys"], run["meta"].get("evaluation_obstacles")) - COLLISION_RADIUS_M
         yr = np.abs(run["yaw_rates"])
         reversals = int(np.sum(np.diff(np.sign(run["yaw_rates"][np.abs(run["yaw_rates"]) > 0.05])) != 0))
         reacted = np.where(yr > 0.05)[0]
@@ -244,8 +244,8 @@ def plot_timeseries(runs, out):
               f"min_margin={clr.min():+.2f}m  first_reaction@{first}  steering_reversals={reversals}")
 
 
-def draw_obstacles(ax, xlim, ylim):
-    for o in OBSTACLES:
+def draw_obstacles(ax, xlim, ylim, obstacles=None):
+    for o in (OBSTACLES if obstacles is None else obstacles):
         if not (xlim[0] - 2 <= o["x"] <= xlim[1] + 2):
             continue
         if o["kind"] == "circle":
@@ -335,10 +335,10 @@ def main():
         cols = min(3, n); rows = math.ceil(n / cols)
         fig, axes = plt.subplots(rows, cols, figsize=(5.2 * cols, 3.4 * rows), squeeze=False)
         for ax, run in zip(axes.flat, runs):
-            draw_obstacles(ax, xlim, ylim)
+            draw_obstacles(ax, xlim, ylim, run["meta"].get("evaluation_obstacles"))
             draw_reference(ax, [run])
             plot_path(ax, run)
-            clr = min_clearance(run["xs"], run["ys"]) - COLLISION_RADIUS_M
+            clr = min_clearance(run["xs"], run["ys"], run["meta"].get("evaluation_obstacles")) - COLLISION_RADIUS_M
             ax.set_title(f"{run['name']}\nmin margin {clr:.2f} m | {_status(run['result'])}", fontsize=8)
             ax.set_xlim(xlim); ax.set_ylim(ylim); ax.set_aspect("equal"); ax.grid(alpha=0.2, lw=0.4)
         for ax in axes.flat[len(runs):]:
@@ -349,11 +349,13 @@ def main():
         fig.suptitle("Trajectories (top-down), coloured by controller mode", fontsize=11)
     else:
         fig, ax = plt.subplots(figsize=(11, 6))
-        draw_obstacles(ax, xlim, ylim)
+        if any(r["meta"].get("evaluation_obstacles") != runs[0]["meta"].get("evaluation_obstacles") for r in runs):
+            raise ValueError("Different obstacle maps require --grid")
+        draw_obstacles(ax, xlim, ylim, runs[0]["meta"].get("evaluation_obstacles"))
         draw_reference(ax, runs)
         cmap = plt.cm.viridis(np.linspace(0, 1, len(runs)))
         for run, color in zip(runs, cmap):
-            clr = min_clearance(run["xs"], run["ys"]) - COLLISION_RADIUS_M
+            clr = min_clearance(run["xs"], run["ys"], run["meta"].get("evaluation_obstacles")) - COLLISION_RADIUS_M
             tag = "  X" if _status(run["result"]) == "COLLIDED" else ""
             plot_path(ax, run, single_color=color,
                       label=f"{run['name']} [{run['meta'].get('controller_version','?')}] "
@@ -367,7 +369,7 @@ def main():
     fig.savefig(args.out, dpi=130, bbox_inches="tight")
     print(f"saved {args.out}  ({len(runs)} run(s): {', '.join(r['name'] for r in runs)})")
     for r in runs:
-        clr = min_clearance(r["xs"], r["ys"]) - COLLISION_RADIUS_M
+        clr = min_clearance(r["xs"], r["ys"], r["meta"].get("evaluation_obstacles")) - COLLISION_RADIUS_M
         print(f"  {r['name']:<24} min_margin={clr:+5.2f}m  frames={len(r['xs']):<5} "
               f"{_status(r['result'])}  [{r['meta'].get('controller_version','?')}]")
 

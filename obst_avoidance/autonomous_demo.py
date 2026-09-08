@@ -29,9 +29,10 @@ def main(argv=None):
     parser.add_argument('--max-wall-time', type=float, default=240.0)
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--gazebo-gui', action='store_true')
-    parser.add_argument('--controller', choices=('baseline', 'pathtrack', 'pathtrack_v2', 'pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5'), default='baseline',
+    parser.add_argument('--controller', choices=('baseline', 'pathtrack', 'pathtrack_v2', 'pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5', 'cheap_visible'), default='baseline',
                         help='baseline = fixed world +x goal (unchanged); pathtrack = '
                              'pure-pursuit lookahead on the straight spawn->goal route')
+    parser.add_argument('--basic-scene', action='store_true', help='isolated large untextured box test')
     parser.add_argument('--endpoint-goal', action='store_true',
                         help='require arrival within 0.75m of the route endpoint in any arm')
     parser.add_argument('--lookahead-m', type=float, default=3.0,
@@ -47,21 +48,25 @@ def main(argv=None):
     if args.output_dir.exists():
         parser.error('choose a new output directory; existing runs are preserved')
     args.output_dir.mkdir(parents=True)
-    segment = ZONE_SEGMENTS[args.zone]
+    segment = dict(start_x=10., goal_x_m=25.) if args.basic_scene else ZONE_SEGMENTS[args.zone]
+    world_file = Path(__file__).resolve().parents[1] / 'worlds' / ('env_basic_box.sdf' if args.basic_scene else 'env_zones.sdf')
+    evaluation_obstacles = ([dict(name='basic_box',kind='box',x=17.,y=0.,half_x=1.,half_y=1.5,zone='basic')] if args.basic_scene else None)
     config = dict(zone=args.zone, spawn_x=segment['start_x'], spawn_y=args.spawn_y,
                   goal_x=segment['goal_x_m'], altitude=args.altitude,
-                  max_wall_time=args.max_wall_time, speed_mps=0.8, sectors=11,
+                  max_wall_time=args.max_wall_time, speed_mps=.5 if args.controller == "cheap_visible" else .8, sectors=11,
                   feature_count=168, perception='cheap', seed=None, seed_applied=False,
                   velocity_frame='body forward converted to world ENU / LOCAL_NED',
-                  controller=args.controller, lookahead_m=args.lookahead_m,
+                  controller=args.controller, lookahead_m=args.lookahead_m, basic_scene=args.basic_scene,
+                  perception_version='cheap_balanced_visible_v1' if args.controller == 'cheap_visible' else 'cheap_baseline',
+                  visible_padding_rad=.55 if args.controller == 'cheap_visible' else None,
                   visual_recording_fps=25.0, unannotated_recording="raw_camera.avi (MJPG, lossy)", command_timeout_s=1.0,
                   endpoint_goal=args.endpoint_goal or args.controller in ('pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5'),
                   min_ttc_s=2.0, min_forward_depth_m=1.0, confidence_full_speed=0.25,
                   yaw_accel_max=1.0 if args.controller in ('pathtrack_v4', 'pathtrack_v5') else None,
                   unsupported_timeout_s=5.0 if args.controller in ('pathtrack_v4', 'pathtrack_v5') else None,
-                  speed_policy='confidence_and_alignment' if args.controller in ('pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5') else 'constant')
+                  speed_policy='confidence_and_alignment' if args.controller in ('pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5') else ('alignment' if args.controller == 'cheap_visible' else 'constant'))
     import hashlib
-    config['world_sha256'] = hashlib.sha256((Path(__file__).resolve().parents[1] / 'worlds/env_zones.sdf').read_bytes()).hexdigest()
+    config['world_sha256'] = hashlib.sha256(world_file.read_bytes()).hexdigest()
     (args.output_dir / 'config.json').write_text(json.dumps(config, indent=2))
     cancel = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -103,6 +108,8 @@ def main(argv=None):
                 cv2.VideoWriter_fourcc(*'MJPG'), 25.0, (packet.image.shape[1], packet.image.shape[0]))
             if not raw_writer.isOpened():
                 raise RuntimeError('Could not create the unannotated camera recording')
+        for x,y,w,h in getattr(stage, 'last_obstacle_boxes', []):
+            cv2.rectangle(last_image,(x,y),(x+w,y+h),(0,0,255),2)
         writer.write(last_image)
         raw_writer.write(cv2.cvtColor(packet.image, cv2.COLOR_RGB2BGR))
         video_index.write(json.dumps(dict(video_frame=display_count, seq=packet.seq,
@@ -164,7 +171,7 @@ def main(argv=None):
             gz_env.pop(_qt_var, None)
         stack = subprocess.Popen([
             'ros2', 'launch', 'obst_avoidance', 'env_zones.launch.py',
-            f'use_gui:={str(args.gazebo_gui).lower()}',
+            f'use_gui:={str(args.gazebo_gui).lower()}', f'world_path:={world_file}',
             f'spawn_x:={segment["start_x"]}', f'spawn_y:={args.spawn_y}',
         ], cwd=args.output_dir, stdout=stack_log, stderr=subprocess.STDOUT,
             start_new_session=True, env=gz_env)
@@ -185,7 +192,8 @@ def main(argv=None):
         source.wait_for_intrinsics(timeout_s=90)
         config['intrinsics'] = dict(source.intrinsics)
         (args.output_dir / 'config.json').write_text(json.dumps(config, indent=2))
-        stage = CheapStage(source.intrinsics)
+        stage = CheapStage(source.intrinsics, balanced_tracks=args.controller == "cheap_visible",
+                           visible_obstacles=args.controller == "cheap_visible")
         if window_open:
             cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(WINDOW, 960, 915)
@@ -237,14 +245,16 @@ def main(argv=None):
             robust_hysteresis=args.controller in ('pathtrack_v2', 'pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5'),
             goal_recovery=args.controller in ('pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5'),
             opening_steering=args.controller in ('pathtrack_v4', 'pathtrack_v5'),
-            reorient_to_goal=args.controller == 'pathtrack_v5'))
+            reorient_to_goal=args.controller == 'pathtrack_v5',
+            visible_avoidance=args.controller == 'cheap_visible',
+            fwd_vel=.5 if args.controller == 'cheap_visible' else .8))
         # All variants use shared SectorController. pathtrack changes only the
         # goal; v2 adds hysteresis fixes; v3 adds admission/variable speed; v4
         # adds opening steering, yaw slew and bounded perception failure; v5
         # adds stationary reorientation when the route leaves the camera view.
         goal_provider = None
         controller_version = 'baseline_world_bearing'
-        if args.controller in ('pathtrack', 'pathtrack_v2', 'pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5'):
+        if args.controller in ('pathtrack', 'pathtrack_v2', 'pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5', 'cheap_visible'):
             from .control.reference_path import ReferencePathGoal
             goal_provider = ReferencePathGoal(
                 ax=segment['start_x'], ay=args.spawn_y,
@@ -259,7 +269,7 @@ def main(argv=None):
                                log_path=str(args.output_dir / 'frames.jsonl'), frame_timeout_s=5,
                                goal_provider=goal_provider, controller_version=controller_version,
                                goal_xy=(segment['goal_x_m'], args.spawn_y) if args.endpoint_goal or args.controller in ('pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5') else None,
-                               scene_version='env_zones.sdf',
+                               scene_version=world_file.name, evaluation_obstacles=evaluation_obstacles,
                                unsupported_timeout_s=5.0 if args.controller in ('pathtrack_v4', 'pathtrack_v5') else None),
             on_frame=observed, should_stop=requested_stop)
         print(f'FLIGHT: CheapStage + shared SectorController active [{controller_version}]', flush=True)

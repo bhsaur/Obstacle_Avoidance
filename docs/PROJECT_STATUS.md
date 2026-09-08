@@ -1,5 +1,16 @@
 # Current project status
 
+Latest 2026-09-09: opt-in `cheap_visible` passed the basic plain-box simulator
+mission from centered and ±0.7 m starts, using classical CV and no depth.
+All three corrected flights reached the endpoint and landed/disarmed; minimum
+sampled airframe margins were 0.25/0.52/0.54 m. One earlier collision and one
+startup timeout are preserved. 137 distinct offline tests pass; package build
+succeeded. Simulator processes/ports are clean. Claude review pending.
+See [CHEAP-BASIC evidence](handoffs/2026-09-09-codex-cheap-basic.md) and
+[launch guide](BASIC_AVOIDANCE.md). This is a single large-visible-obstacle
+milestone, not general navigation or gating validation. Older entries below
+are historical.
+
 Latest diagnosis: v4 often drove while its route heading was outside camera
 view. Opt-in pathtrack_v5 adds stationary goal reorientation; the trial returned
 toward the route but stopped for missing perception, with no mission success.

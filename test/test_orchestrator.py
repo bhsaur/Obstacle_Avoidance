@@ -440,3 +440,16 @@ def test_invalid_odometry_resets_slew_to_command_actually_sent():
     orch.run()
     assert observed == [0.,0.]
     assert orch.vehicle.sent_commands[0].yaw_rate == 0
+
+
+def test_custom_scene_collision_and_metadata(tmp_path):
+    path = str(tmp_path / 'basic.jsonl')
+    orch = _make_orchestrator(dx_per_call=1.0, y=0.0, log_path=path)
+    box = dict(name='basic_box', kind='box', x=17., y=0.,
+               half_x=1., half_y=1.5, zone='basic')
+    orch.config.evaluation_obstacles = [box]
+    result = orch.run()
+    assert result.collided and result.collision_zone == 'basic'
+    assert result.collision_xy[0] <= 18
+    meta = json.loads(open(path).readline())['meta']
+    assert meta['evaluation_obstacles'] == [box]

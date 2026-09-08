@@ -139,3 +139,6 @@ class ControlState:
     previous_yaw_rate: float = 0.0  # v4 only; zero after a blind stop
 
     reorienting: bool = False  # v5: stationary turn until goal is inside central FOV
+
+    visible_world_spans: tuple = ()  # short-lived angular obstacle memory
+    visible_last_seen: Optional[float] = None
