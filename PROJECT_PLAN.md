@@ -23,7 +23,7 @@ A collaborator can benchmark depth and validate heavy-only flight on a GPU in
 parallel. Neither effort should wait for the other to begin. However, a final
 claim that deferring improves navigation requires both to work together.
 
-Read [GETTING_STARTED.md](GETTING_STARTED.md) for setup, this plan for direction,
+Read [README.md](README.md) for setup, this plan for direction,
 [docs/TASKS.md](docs/TASKS.md) for assignments, and the linked handoffs for evidence.
 The [original design reference](docs/reference/project_complete_reference.md)
 is historical context, not a current implementation checklist. Its novelty
@@ -208,7 +208,7 @@ speed/scheduling policy rather than a substitute for the matched moving test.
 
 ## 8. GPU collaborator handoff
 
-Send a repository revision, this plan, GETTING_STARTED.md, relevant AGENTS and
+Send a repository revision, this plan, README.md, relevant AGENTS and
 handoffs, dependency/model manifests, and a small separately transferred
 recording bundle. Confirm license/access requirements for the checkpoint and
 include checksums. Remove hardcoded local data paths from runnable tools or

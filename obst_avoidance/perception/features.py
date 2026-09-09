@@ -7,7 +7,7 @@ this can't drift out of sync with FEATURE_SPEC the way a hand-written
 parallel list could).
 
 Every entry corresponds to a documented ask in the CheapStage Phase 2
-task (see obst_avoidance/README.md's "Pre-CheapStage fixes" section for
+task (see obst_avoidance/docs/RESEARCH_LOG.md's "Pre-CheapStage fixes" section for
 the empirical findings these features exist to expose -- O2's sector
 reliability finding, R2's ground-contamination and untextured-wall
 findings, Step U/V's confirmed mappings). Two ambiguous cases in the
