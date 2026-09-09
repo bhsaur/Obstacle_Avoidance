@@ -37,7 +37,13 @@ def main(argv=None):
                         help='require arrival within 0.75m of the route endpoint in any arm')
     parser.add_argument('--lookahead-m', type=float, default=3.0,
                         help='path variants: lookahead distance along the reference route')
+    parser.add_argument('--perception', choices=('cheap', 'heavy'), default='cheap',
+                        help='cheap = CheapStage LK/flow (default); heavy = HeavyStage '
+                             'monocular depth (Depth Anything V2). NOTE: heavy is ~4-5 s/frame '
+                             'on CPU -> severely update-rate-limited closed-loop (HEAVY-CTRL-TEST).')
     args = parser.parse_args(argv)
+    if args.perception == 'heavy' and args.controller == 'cheap_visible':
+        parser.error("cheap_visible needs CheapStage obstacle_spans; it cannot run on --perception heavy")
     if not np.isfinite([args.spawn_y, args.altitude, args.max_wall_time, args.lookahead_m]).all():
         parser.error('flight parameters must be finite')
     if args.lookahead_m <= 0:
@@ -49,12 +55,23 @@ def main(argv=None):
         parser.error('choose a new output directory; existing runs are preserved')
     args.output_dir.mkdir(parents=True)
     segment = dict(start_x=10., goal_x_m=25.) if args.basic_scene else ZONE_SEGMENTS[args.zone]
-    world_file = Path(__file__).resolve().parents[1] / 'worlds' / ('env_basic_box.sdf' if args.basic_scene else 'env_zones.sdf')
+    _world_name = 'env_basic_box.sdf' if args.basic_scene else 'env_zones.sdf'
+    # Resolve the world file robustly: the src-tree layout (parents[1]/worlds) does
+    # NOT exist when running the INSTALLED copy (colcon makes a real copy here, so
+    # __file__ lives under site-packages/); the installed world is under the ament
+    # share dir. Try both; tolerate absence for the sha (metadata only).
+    _world_candidates = [Path(__file__).resolve().parents[1] / 'worlds' / _world_name]
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        _world_candidates.append(Path(get_package_share_directory('obst_avoidance')) / 'worlds' / _world_name)
+    except Exception:
+        pass
+    world_file = next((p for p in _world_candidates if p.exists()), _world_candidates[0])
     evaluation_obstacles = ([dict(name='basic_box',kind='box',x=17.,y=0.,half_x=1.,half_y=1.5,zone='basic')] if args.basic_scene else None)
     config = dict(zone=args.zone, spawn_x=segment['start_x'], spawn_y=args.spawn_y,
                   goal_x=segment['goal_x_m'], altitude=args.altitude,
                   max_wall_time=args.max_wall_time, speed_mps=.5 if args.controller == "cheap_visible" else .8, sectors=11,
-                  feature_count=168, perception='cheap', seed=None, seed_applied=False,
+                  feature_count=168, perception=args.perception, seed=None, seed_applied=False,
                   velocity_frame='body forward converted to world ENU / LOCAL_NED',
                   controller=args.controller, lookahead_m=args.lookahead_m, basic_scene=args.basic_scene,
                   perception_version='cheap_balanced_visible_v1' if args.controller == 'cheap_visible' else 'cheap_baseline',
@@ -66,7 +83,8 @@ def main(argv=None):
                   unsupported_timeout_s=5.0 if args.controller in ('pathtrack_v4', 'pathtrack_v5') else None,
                   speed_policy='confidence_and_alignment' if args.controller in ('pathtrack_v3', 'pathtrack_v4', 'pathtrack_v5') else ('alignment' if args.controller == 'cheap_visible' else 'constant'))
     import hashlib
-    config['world_sha256'] = hashlib.sha256(world_file.read_bytes()).hexdigest()
+    config['world_sha256'] = (hashlib.sha256(world_file.read_bytes()).hexdigest()
+                              if world_file.exists() else 'unavailable')
     (args.output_dir / 'config.json').write_text(json.dumps(config, indent=2))
     cancel = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -96,7 +114,20 @@ def main(argv=None):
         position = odom[0]
         if position is not None:
             label += f' | x={position[0]:.1f} y={position[1]:.1f} z={position[2]:.1f}'
-        last_image = draw_overlay(packet.image, belief, features, stage.last_tracks, label)
+        if len(features) > 0:
+            last_image = draw_overlay(packet.image, belief, features, getattr(stage, 'last_tracks', None), label)
+        else:
+            # heavy perception has no cheap-feature panel/LK tracks -- annotate the
+            # raw frame with the belief summary so the recording is still useful.
+            last_image = cv2.cvtColor(packet.image, cv2.COLOR_RGB2BGR)
+            n = len(belief.scores)
+            vN = int(belief.valid.sum())
+            mn = float(np.min([belief.scores[i] for i in range(n) if belief.valid[i]])) if vN else float('nan')
+            for k, txt in enumerate([label, f'HEAVY valid={vN}/{n} min_score={mn:.2f} conf={belief.confidence:.2f}']):
+                cv2.putText(last_image, txt, (8, 20 + 20 * k), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.putText(last_image, txt, (8, 20 + 20 * k), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5, (0, 255, 0), 1, cv2.LINE_AA)
         if writer is None:
             writer = cv2.VideoWriter(str(args.output_dir / 'camera.avi'),
                                      cv2.VideoWriter_fourcc(*'MJPG'), 25.0,
@@ -192,8 +223,19 @@ def main(argv=None):
         source.wait_for_intrinsics(timeout_s=90)
         config['intrinsics'] = dict(source.intrinsics)
         (args.output_dir / 'config.json').write_text(json.dumps(config, indent=2))
-        stage = CheapStage(source.intrinsics, balanced_tracks=args.controller == "cheap_visible",
-                           visible_obstacles=args.controller == "cheap_visible")
+        if args.perception == 'heavy':
+            # HEAVY-CTRL-TEST: HeavyStage (monocular depth) via the adapter so it
+            # presents CheapStage's 3-arg infer(packet, prev, odom) signature.
+            # Emits an empty cheap-feature vector (show() below handles that) and
+            # no LK tracks. ~4-5 s/frame on CPU -> update-rate-limited (expected).
+            from .perception import HeavyStage
+            from .runtime import HeavyStageAdapter
+            print('loading HeavyStage (Depth Anything V2 metric, CPU -- slow)...', flush=True)
+            stage = HeavyStageAdapter(HeavyStage(source.intrinsics))
+            print('HeavyStage loaded', flush=True)
+        else:
+            stage = CheapStage(source.intrinsics, balanced_tracks=args.controller == "cheap_visible",
+                               visible_obstacles=args.controller == "cheap_visible")
         if window_open:
             cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(WINDOW, 960, 915)
@@ -238,7 +280,7 @@ def main(argv=None):
                 while time.monotonic() < until and not requested_stop():
                     preview('WAITING FOR EKF')
 
-        stage.reset()
+        getattr(stage, 'reset', lambda: None)()  # HeavyStageAdapter has no EMA/tracker state to reset
         bearings = tuple(geometry.sector_bearings_rad(
             source.intrinsics['width'], source.intrinsics['fx'], source.intrinsics['cx'], n_sectors=11))
         controller = SectorController(SectorControllerConfig(n_sectors=11, sector_bearings_rad=bearings,
@@ -272,7 +314,7 @@ def main(argv=None):
                                scene_version=world_file.name, evaluation_obstacles=evaluation_obstacles,
                                unsupported_timeout_s=5.0 if args.controller in ('pathtrack_v4', 'pathtrack_v5') else None),
             on_frame=observed, should_stop=requested_stop)
-        print(f'FLIGHT: CheapStage + shared SectorController active [{controller_version}]', flush=True)
+        print(f'FLIGHT: {args.perception.upper()}Stage + shared SectorController active [{controller_version}]', flush=True)
         result = orchestrator.run()
         summary.update(status='finished', result=asdict(result))
         print(f'RESULT: {result.stop_reason}, frames={result.n_frames}, '

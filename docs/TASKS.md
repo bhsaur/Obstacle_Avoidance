@@ -153,3 +153,8 @@ landed/disarmed. Preserved initial collision and separate startup timeout.
 137 distinct offline tests pass; package build succeeds; runtime cleaned up.
 Claude peer review pending. [Evidence and limits](handoffs/2026-09-09-codex-cheap-basic.md),
 [run instructions](BASIC_AVOIDANCE.md).
+
+## CHEAP-MULTI — in_progress
+Codex, baseline e601edb. User requests the same cheap-visible controller in
+the original trees/boxes world. Run Zone A and dense mixed Zone C with frozen
+settings, live camera and preserved recordings; evaluate actual outcomes.
