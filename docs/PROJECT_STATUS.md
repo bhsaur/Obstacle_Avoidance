@@ -1,5 +1,13 @@
 # Current project status
 
+Latest 2026-09-10: [full project plan](../PROJECT_PLAN.md) consolidates verified
+work, open controller/evaluation issues, gate development and GPU assignments.
+Mixed-world tests: Zone A reached the endpoint with poor footprint clearance;
+Zone C reached a gap-selection deadlock and was stopped by the user. Both
+landed/disarmed; runtime shutdown verified at that checkpoint. See
+[mixed-world evidence](handoffs/2026-09-10-codex-cheap-multi-stop.md).
+No simulator or implementation work was started for the planning task.
+
 Latest 2026-09-09: opt-in `cheap_visible` passed the basic plain-box simulator
 mission from centered and ±0.7 m starts, using classical CV and no depth.
 All three corrected flights reached the endpoint and landed/disarmed; minimum

@@ -1,6 +1,6 @@
 # Shared task board
 
-Updated: 2026-09-06. This board records priorities; execute tasks within the
+Updated: 2026-09-10. Full roadmap: [PROJECT_PLAN.md](../PROJECT_PLAN.md). This board records priorities; execute tasks within the
 user's current request. Suggested owners below are a useful division, not
 claims. Claim the edit lock before assigning an actual owner or writing.
 
@@ -44,7 +44,8 @@ Evidence: [CheapStage review](handoffs/2026-09-06-codex-cheap-review.md) and
 binary passed the 25-request duplicate-ACK probe and a live cold start with
 camera processing and connected/disarmed telemetry. Claude review pending.
 
-The live demo is being left running for the user under launch PID/PGID
+Historical 2026-09-06 runtime note (superseded by subsequent shutdowns):
+the live demo was left running for the user under launch PID/PGID
 944722 (tool session 18763); MAVROS PID 944758, viewer PID 944865, as recorded
 at handoff. Recheck process identity before signaling these IDs. Logs are in
 `eval_results/cheap_review_20260906_0gYo8b/mavros_fix_1/` at workspace root.
@@ -154,7 +155,17 @@ landed/disarmed. Preserved initial collision and separate startup timeout.
 Claude peer review pending. [Evidence and limits](handoffs/2026-09-09-codex-cheap-basic.md),
 [run instructions](BASIC_AVOIDANCE.md).
 
-## CHEAP-MULTI — in_progress
+## CHEAP-MULTI — review
 Codex, baseline e601edb. User requests the same cheap-visible controller in
 the original trees/boxes world. Run Zone A and dense mixed Zone C with frozen
 settings, live camera and preserved recordings; evaluate actual outcomes.
+
+CHEAP-MULTI paused by user after tests: [results and shutdown checkpoint](handoffs/2026-09-10-codex-cheap-multi-stop.md). Zone A endpoint reached with poor clearance; Zone C gap deadlock, user-stopped. All runtime processes stopped.
+
+## PLAN-001 — review
+Codex, baseline 5076902 plus preserved CHEAP-MULTI checkpoint. Created
+[full project plan](../PROJECT_PLAN.md) covering evidence, ordered tasks,
+acceptance criteria, laptop/GPU split, data labels, common controller, timing,
+collaborator deliverables and final evaluation. Documentation only; peer
+review pending. New roadmap task IDs are proposed, not actively assigned.
+Plan handoff: [scope and verification](handoffs/2026-09-10-codex-project-plan.md).

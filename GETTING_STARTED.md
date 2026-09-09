@@ -1,5 +1,9 @@
 # obst_avoidance — Getting Started
 
+For the current evidence, limitations, laptop/GPU work split and remaining
+implementation plan, read [PROJECT_PLAN.md](PROJECT_PLAN.md). Historical
+AUC and projected GPU speeds below are not current closed-loop results.
+
 Monocular obstacle avoidance for an ArduPilot + Gazebo quadrotor (ROS 2),
 built as a research testbed for a **two-stage adaptive-perception** idea:
 a cheap optical-flow stage runs every frame, and a learned "gate" decides
