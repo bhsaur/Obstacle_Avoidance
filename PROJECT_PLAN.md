@@ -264,6 +264,94 @@ Include uncertainty intervals, per-scene results and failure videos. A gate
 claim requires a better measured safety/compute tradeoff than periodic routing;
 if periodic matches it, report that result honestly and reconsider the claim.
 
+## 9A. Actual evaluation files and how to use them
+
+These are existing files, not just proposed evaluation methods. Some were
+originally built by Claude and subsequently reviewed/extended by Codex; the
+recent basic-box summaries and videos were generated during Codex tests.
+
+### Reusable code in the repository
+
+| File | What it does now | Limits |
+|---|---|---|
+| [tools/plot_trajectories.py](tools/plot_trajectories.py) | Reads recorded runs; draws overlaid or side-by-side trajectories, clearance, controller modes, route reference and reaction time series | Offline plotting only; does not run flights or establish matched-budget fairness; original-world boxes still use approximate axis-aligned footprints |
+| [tools/run_ctrl_compare.sh](tools/run_ctrl_compare.sh) | Sequentially launches bounded controller trials with the same zone/start; requires endpoint arrival; saves each run and checks process cleanup | Current accepted variants are baseline/pathtrack through v5; does not yet accept cheap_visible or implement the six gate arms; launches/arms the simulation |
+| [obst_avoidance/autonomous_demo.py](obst_avoidance/autonomous_demo.py) | Runs one simulated flight, shows/records the camera, writes configuration and outcome, lands and cleans up | This is the runner used for our cheap_visible basic and mixed-world tests; not a complete batch benchmark |
+| [obst_avoidance/runtime/orchestrator.py](obst_avoidance/runtime/orchestrator.py) | Records per-frame perception/control data and computes endpoint/collision/timeout outcomes | Evaluator geometry and failure taxonomy need the repairs described above |
+| [tools/run_flow_only_eval.py](tools/run_flow_only_eval.py), [tools/run_heavy_only_eval.py](tools/run_heavy_only_eval.py) | Existing single-stage evaluation entry points | Legacy experiment configurations; inspect setup/controller assumptions before using them as a paired comparison |
+| [tools/gate_validate.py](tools/gate_validate.py) | Historical offline gate validation | Does not validate today's controller or a current 168-feature runtime artifact |
+| [tools/dp_dr_gate_eval.py](tools/dp_dr_gate_eval.py) | Recording-based offline feature/gate comparison work | Classification evidence, not closed-loop navigation evidence |
+| [test/test_trajectory_review.py](test/test_trajectory_review.py), [test/test_orchestrator.py](test/test_orchestrator.py) | Regression tests for result loading, plotting-related behavior and runtime/evaluation logic | Software checks, not substitutes for flight trials |
+
+### What each recorded flight contains
+
+| File inside a run directory | Use |
+|---|---|
+| `config.json` | Check controller, perception, world hash, speed, start, goal and other settings before comparing |
+| `result.json` | Read completion/collision/stop reason and landing/final state; distinguish user stop from timeout |
+| `frames.jsonl` | Metadata plus per-frame pose, commands, beliefs, detection spans, timing and controller diagnostics; input to the plotter |
+| `camera.avi` | Annotated footage with sectors/scores and detection bounds |
+| `raw_camera.avi` | Unannotated lossy footage for visual review; not an annotated-video training input |
+| `video_frames.jsonl` | Map video frames to sequence identity, capture time and flight phase |
+| `simulator.log` | Diagnose startup, MAVROS and simulator errors |
+
+Source-hash manifests are saved alongside the relevant test runs; their
+locations vary by experiment. A result's “no collision” flag must be read with
+the evaluator's geometry assumptions, especially for Zone A's rotated box.
+
+### Generated results already available on Saurabh's laptop
+
+Paths below are relative to `/home/saurabh/ardu_ws/eval_results/`:
+
+| Artifact | What to inspect |
+|---|---|
+| `cheap_basic_offsets_retry_danjmv/three_trials.png` | Side-by-side centered and ±0.7 m successful box trajectories |
+| `cheap_basic_offsets_retry_danjmv/summary.json` | Machine-readable outcomes, sampled margins, endpoint distances and durations for those three trials |
+| `cheap_basic_center_v2_wgShJe/comparison.png` | Failed initial box attempt versus corrected centered attempt |
+| `cheap_basic_center_v2_wgShJe/avoidance.mp4` | Annotated autonomous phase of the corrected centered box flight |
+| `cheap_multi_QKvtug/zone_A_trajectory.png` | Sparse mixed-world trajectory and approximate clearance |
+| `cheap_multi_QKvtug/zone_A/flight.mp4` | Annotated Zone A autonomous phase |
+| `cheap_multi_QKvtug/zone_A/rotated_footprint_check.json` | Extra geometry audit explaining why Zone A's reported pass is marginal |
+| `cheap_multi_QKvtug/zone_C/result.json` and `frames.jsonl` | Dense-scene deadlock, user-stop outcome and frame-level evidence |
+
+The three-trial `summary.json` and comparison image were generated for that
+specific experiment using a one-off analysis script. They are **not** evidence
+that a general six-arm JSON/CSV aggregation tool already exists. That reusable
+runner/aggregator remains EVAL-001 work. The Zone C run has its raw logs/videos;
+a finished Zone C comparison plot was not produced before the user stopped work.
+
+### Compare existing recordings without starting a simulator
+
+Run from the package directory. These commands only read saved runs and write
+new plots; the example output names should be changed if already in use.
+
+```bash
+cd /home/saurabh/ardu_ws/src/obst_avoidance
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+export MPLCONFIGDIR=/tmp/obst-mpl
+
+# Compare the failed and corrected centered-box attempts side by side.
+python3 tools/plot_trajectories.py \
+  /home/saurabh/ardu_ws/eval_results/cheap_basic_center_jr85nV/run \
+  /home/saurabh/ardu_ws/eval_results/cheap_basic_center_v2_wgShJe/run \
+  --grid --out /tmp/box_attempt_comparison.png
+
+# Inspect command/measured yaw, clearance and route deviation over capture time.
+python3 tools/plot_trajectories.py \
+  /home/saurabh/ardu_ws/eval_results/cheap_multi_QKvtug/zone_A \
+  --timeseries --out /tmp/zone_A_reaction_review.png
+```
+
+For other runs, replace the run paths. Use `--overlay` for trajectories sharing
+a map, `--grid` for side-by-side inspection, and `--timeseries` for reaction
+timing. Differing obstacle maps require separate panels. The plotter can
+visualize different experiments but cannot make them a fair controlled test;
+check configuration and hardware before interpreting a performance difference.
+
+Share these artifacts separately with collaborators: recordings/evaluation
+outputs are git-ignored and stored outside the package. Sending only the
+repository or GETTING_STARTED.md will not send the test evidence.
+
 ## 10. Collaboration and immediate next assignments
 
 | Owner suggestion | First bounded assignment | Review/result to return |

@@ -169,3 +169,9 @@ acceptance criteria, laptop/GPU split, data labels, common controller, timing,
 collaborator deliverables and final evaluation. Documentation only; peer
 review pending. New roadmap task IDs are proposed, not actively assigned.
 Plan handoff: [scope and verification](handoffs/2026-09-10-codex-project-plan.md).
+
+## PLAN-EVAL-FILES — review
+Codex added the actual evaluation-file inventory, saved artifact locations,
+recording-field guide and offline comparison commands to PROJECT_PLAN.md
+section 9A. Separates existing scripts from pending six-arm aggregation.
+Documentation only; no flight started.
